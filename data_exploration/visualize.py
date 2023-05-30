@@ -1,20 +1,18 @@
 from pandas import DataFrame, Series
 from matplotlib import pyplot as plt
-
-DETECTOR_KEYS = ["volume_id", "layer_id", "module_id"]
-HITS_SAMPLES = None
+from constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES
 
 
 def get_colors(data: DataFrame, mode: str = "volume_layer"):
     """Map data to colors"""
     match mode:
-        case "volume_layer":
-            # TODO
-            # test = data.apply(lambda x: str(int(x["layer_id"] / 2)) + str(int(x["volume_id"])), axis=1)
-            # # test = data.apply(lambda x: "".join([str(int(x[key])) for key in ["volume_id", "layer_id"]]), axis=1)
-            # _list = list(test)
-            # # unique = combined.unique()
-            return data.volume_id
+        # case "volume_layer":
+        #     TODO
+        #     test = data.apply(lambda x: str(int(x["layer_id"] / 2)) + str(int(x["volume_id"])), axis=1)
+        #     # test = data.apply(lambda x: "".join([str(int(x[key])) for key in ["volume_id", "layer_id"]]), axis=1)
+        #     _list = list(test)
+        #     # unique = combined.unique()
+        #     return data.volume_id
         case "volume_id":
             return data.volume_id
         case "layer_id":
@@ -30,7 +28,7 @@ def get_colors(data: DataFrame, mode: str = "volume_layer"):
 def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
     """Plot a scatter plot of the hits in either 2D or 3D"""
     # Create figure
-    fig = plt.figure(figsize=(10, 10))
+    fig = plt.figure(figsize=(FIG_X, FIG_Y))
     ax_title_str = ", ".join(ax_keys)
 
     # Choose columns
@@ -55,37 +53,23 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
     return fig
 
 
-def visualize(
-    loaded_event: tuple[DataFrame, DataFrame, DataFrame, DataFrame],
-    plot_event: bool = True,
-    unique: bool = False,
-    **kwargs,
-):
-    """Visualize the data"""
-    # Load a single event
-    hits, cells, particles, truth = loaded_event
-
-    # Print a few datatable samples
-    event_kv = {"hits": hits, "cells": cells, "particles": particles, "truth": truth}
+def print_heads(event_kv: dict[str, DataFrame]):
+    """Print a few datatable samples"""
     for name, table in event_kv.items():
         print("Table: " + name + ":")
         print(table.head())
-        print("\n \n")
+        print("\n  \n")
 
-    if not plot_event:
-        return
 
-    # TODO
-    color_modes = [*DETECTOR_KEYS]
-    # color_modes = ["volume_layer", *DETECTOR_KEYS]
+def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False):
+    """Plot the hits"""
 
-    # Add detector identifiers to true particle data
-    event_kv["truth"] = truth.merge(hits[["hit_id", *DETECTOR_KEYS]], on="hit_id")
-
+    # TODO cartesian product of all combinations of ids
+    color_modes = DETECTOR_KEYS
     # Plot hits for all data types
-    for data_type in ["truth"]:
+    for table in ["hits", "truth"]:
         # Define axis keys
-        match data_type:
+        match table:
             case "hits":
                 ax1 = "x"
                 ax2 = "y"
@@ -96,7 +80,7 @@ def visualize(
                 ax3 = "tz"
             case _:
                 raise ValueError("Data type not recognized")
-        selected_data = event_kv[data_type]
+        selected_data = event_kv[table]
 
         # Take a subset of the hits, if size is specified
         if type(HITS_SAMPLES) == int:
@@ -110,9 +94,10 @@ def visualize(
 
             # Plot hits for all color modes
             for color_mode in color_modes:
+                pass
                 # Plot hits
                 fig = scatter(data_subset, *ax_keys, color_mode=color_mode)
-                fig.savefig(f"{data_type}_{ax_keys_str}_{color_mode}_scatter_sample.png", dpi=600)
+                fig.savefig(f"{table}_{ax_keys_str}_{color_mode}_scatter_sample.png", dpi=FIG_DPI)
                 plt.close()
 
             # Skip intensive part of loop if `unique` is False
@@ -120,7 +105,7 @@ def visualize(
                 continue
 
             # Draw seperate plots for each unique value of `color_mode`
-            for color_mode in color_modes[:2]:
+            for color_mode in color_modes:
                 unique_values = selected_data[color_mode].unique()
                 for unique_value in unique_values:
                     isolated_detector_data = data_subset.loc[data_subset[color_mode] == unique_value]
@@ -129,7 +114,73 @@ def visualize(
 
                     fig = scatter(isolated_detector_data, *ax_keys, color_mode=anti_color_mode)
                     fig.savefig(
-                        f"{data_type}_{ax_keys_str}_{color_mode}_{unique_value}_vs_{anti_color_mode}_scatter.png",
-                        dpi=600,
+                        f"{table}_{ax_keys_str}_{color_mode}_{unique_value}_vs_{anti_color_mode}_scatter.png",
+                        dpi=FIG_DPI,
                     )
                     plt.close()
+
+
+def histogram(
+    x: Series,
+    bins: int = 100,
+):
+    """Plot a histogram of `x` and `y` on `ax`"""
+    fig = plt.figure(figsize=(FIG_X, FIG_Y))
+    ax = fig.add_subplot()
+    ax.hist(x, bins=bins)
+    return fig
+
+
+def plot_histograms(event_kv: dict[str, DataFrame], errors: dict[str, DataFrame] | None = None):
+    """Plot histograms of the hits"""
+
+    # TODO:
+    # [ ] Charge distribution
+    # [ ] Number of hits per particle
+    # [ ] Number of hits per detector
+    # [ ] Number of hits per layer
+    # [ ] Number of hits per module
+    # [ ] Number of hits per particle
+    # [ ] Number of hits per particle per detector
+    # [ ] Number of hits per particle per layer
+    # [ ] Number of hits per particle per module
+    # [ ] Heatmap of hits in xyz
+    # [ ] Heatmap of hits in rphi
+    # [ ] Heatmap of hits in rz
+    # [ ] Heatmap of hits in r
+    # [ ] Heatmap of hits in phi
+
+    # Single event
+    for table, parameter in [["particles", "q"]]:
+        fig = histogram(event_kv[table][parameter])
+        fig.savefig(f"{table}_{parameter}_histogram.png", dpi=FIG_DPI)
+        plt.close()
+
+
+def visualize_event(
+    loaded_event: tuple[DataFrame, DataFrame, DataFrame, DataFrame],
+    do_table: bool = True,
+    do_plot_hits: bool = True,
+    do_plot_histogram: bool = True,
+    unique: bool = False,
+    **kwargs,
+):
+    """Pipe for visualizing a single event"""
+    # Load a single event
+    hits, cells, particles, truth = loaded_event
+    event_kv = {"hits": hits, "cells": cells, "particles": particles, "truth": truth}
+
+    if do_table:
+        print_heads(event_kv)
+
+    if not any([do_plot_hits, do_plot_histogram]):
+        return
+
+    # Add detector identifiers to true particle data
+    event_kv["truth"] = truth.merge(hits[["hit_id", *DETECTOR_KEYS]], on="hit_id")
+
+    if do_plot_hits:
+        plot_hits(event_kv, unique=unique)
+
+    if do_plot_histogram:
+        plot_histograms(event_kv)
