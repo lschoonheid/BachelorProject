@@ -1,33 +1,15 @@
 import argparse
-from os import listdir
+from helpers import get_event_names
 from trackml.dataset import load_event
 from random import choice as random_choice
-from pandas import DataFrame, Series
+from pandas import DataFrame
 from visualize import *
-from constants import DATA_SAMPLE
-
-
-def get_event_names(dir: str) -> set[str]:
-    """Get unique list of event names in directory `dir`"""
-    list = listdir(dir)
-    event_names = set()
-
-    # Go over all files in directory
-    for filename in list:
-        # Check if item is event file
-        isCSV = filename[-4:] in [".csv", ".CSV"]
-        if not isCSV:
-            continue
-
-        event_name = filename.split("-")[0]
-        event_names.add(event_name)
-
-    return event_names
+from _constants import DATA_SAMPLE
 
 
 def sample_event(random=False, dir=DATA_SAMPLE) -> tuple[DataFrame, DataFrame, DataFrame, DataFrame]:
     """Load a single event and return some info"""
-    event_names = get_event_names(DATA_SAMPLE)
+    event_names = get_event_names(dir)
 
     if random:
         event_path = dir + random_choice(list(event_names))

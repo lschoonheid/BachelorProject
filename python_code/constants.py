@@ -1,5 +1,11 @@
 DETECTOR_KEYS = ["volume_id", "layer_id", "module_id"]
 HITS_SAMPLES = None
+TABLE_INDEX = {
+    "hits": 0,
+    "cells": 1,
+    "particles": 2,
+    "truth": 3,
+}
 
 
 DATA_ROOT = "/data/atlas/users/lschoonh/BachelorProject/data/"

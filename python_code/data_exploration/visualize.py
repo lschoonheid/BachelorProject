@@ -1,6 +1,6 @@
 from pandas import DataFrame, Series
 from matplotlib import pyplot as plt
-from constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES
+from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES
 
 
 def get_colors(data: DataFrame, mode: str = "volume_layer"):
@@ -131,11 +131,13 @@ def histogram(
     return fig
 
 
-def plot_histograms(event_kv: dict[str, DataFrame], errors: dict[str, DataFrame] | None = None):
+def plot_histograms(
+    event_kv: dict[str, DataFrame], errors: dict[str, DataFrame] | None = None, prefix: str | None = None
+):
     """Plot histograms of the hits"""
 
     # TODO:
-    # [ ] Charge distribution
+    # [x] Charge distribution
     # [ ] Number of hits per particle
     # [ ] Number of hits per detector
     # [ ] Number of hits per layer
@@ -153,7 +155,7 @@ def plot_histograms(event_kv: dict[str, DataFrame], errors: dict[str, DataFrame]
     # Single event
     for table, parameter in [["particles", "q"]]:
         fig = histogram(event_kv[table][parameter])
-        fig.savefig(f"{table}_{parameter}_histogram.png", dpi=FIG_DPI)
+        fig.savefig(f"{prefix}_{table}_{parameter}_histogram.png", dpi=FIG_DPI)
         plt.close()
 
 
