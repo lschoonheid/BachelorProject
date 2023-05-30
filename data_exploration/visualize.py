@@ -83,7 +83,7 @@ def visualize(
     event_kv["truth"] = truth.merge(hits[["hit_id", *DETECTOR_KEYS]], on="hit_id")
 
     # Plot hits for all data types
-    for data_type in ["hits", "truth"]:
+    for data_type in ["truth"]:
         # Define axis keys
         match data_type:
             case "hits":
