@@ -58,6 +58,7 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
 def visualize(
     loaded_event: tuple[DataFrame, DataFrame, DataFrame, DataFrame],
     plot_event: bool = True,
+    unique: bool = False,
     **kwargs,
 ):
     """Visualize the data"""
@@ -113,3 +114,22 @@ def visualize(
                 fig = scatter(data_subset, *ax_keys, color_mode=color_mode)
                 fig.savefig(f"{data_type}_{ax_keys_str}_{color_mode}_scatter_sample.png", dpi=600)
                 plt.close()
+
+            # Skip intensive part of loop if `unique` is False
+            if not unique:
+                continue
+
+            # Draw seperate plots for each unique value of `color_mode`
+            for color_mode in color_modes[:2]:
+                unique_values = selected_data[color_mode].unique()
+                for unique_value in unique_values:
+                    isolated_detector_data = data_subset.loc[data_subset[color_mode] == unique_value]
+                    # Since `color_mode` data is isolated, choose other color mode to distinguish data
+                    anti_color_mode = color_modes[1 - color_modes.index(color_mode)]
+
+                    fig = scatter(isolated_detector_data, *ax_keys, color_mode=anti_color_mode)
+                    fig.savefig(
+                        f"{data_type}_{ax_keys_str}_{color_mode}_{unique_value}_vs_{anti_color_mode}_scatter.png",
+                        dpi=600,
+                    )
+                    plt.close()
