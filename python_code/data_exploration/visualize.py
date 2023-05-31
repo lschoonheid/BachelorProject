@@ -1,6 +1,8 @@
 from pandas import DataFrame, Series
 from matplotlib import pyplot as plt
+from random import sample as random_sample
 from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX
+from helpers import get_event_names_str
 
 
 def get_colors(data: DataFrame, mode: str = "volume_layer"):
@@ -61,7 +63,7 @@ def print_heads(event_kv: dict[str, DataFrame]):
         print("\n  \n")
 
 
-def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False):
+def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False, **kwargs):
     """Plot the hits"""
 
     # TODO cartesian product of all combinations of ids
@@ -97,7 +99,10 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False):
                 pass
                 # Plot hits
                 fig = scatter(data_subset, *ax_keys, color_mode=color_mode)
-                fig.savefig(f"{table}_{ax_keys_str}_{color_mode}_scatter_sample.png", dpi=FIG_DPI)
+                fig.savefig(
+                    f"{get_event_names_str(data_subset)}_{table}_{ax_keys_str}_{color_mode}_scatter_sample.png",
+                    dpi=FIG_DPI,
+                )
                 plt.close()
 
             # Skip intensive part of loop if `unique` is False
@@ -120,6 +125,68 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False):
                     plt.close()
 
 
+def plot_tracks(
+    event_kv: dict[str, DataFrame], event_id: str | None = None, N: int | None = 10, random=False, **kwargs
+):
+    """Plot the tracks"""
+    # Note: only works with truth data so far
+
+    # Create figure
+    fig = plt.figure(figsize=(2 * FIG_X, 2 * FIG_Y))
+    ax3d = fig.add_subplot(2, 2, 1, projection="3d")
+    axxy = fig.add_subplot(2, 2, 2)
+    axxz = fig.add_subplot(2, 2, 3)
+    axyz = fig.add_subplot(2, 2, 4)
+
+    ax3d.set_title("3D tracks")
+    axxy.set_title("xy tracks")
+    axxz.set_title("xz tracks")
+    axyz.set_title("yz tracks")
+
+    ax3d.set_xlabel("x")
+    ax3d.set_ylabel("y")
+    ax3d.set_zlabel("z")
+
+    axxy.set_xlabel("x")
+    axxy.set_ylabel("y")
+
+    axxz.set_xlabel("x")
+    axxz.set_ylabel("z")
+
+    axyz.set_xlabel("y")
+    axyz.set_ylabel("z")
+
+    # Select a subset of the particles
+    particle_ids = event_kv["particles"].particle_id.unique()
+    if N is not None:
+        particle_ids = random_sample(list(particle_ids), N) if random else particle_ids[:N]
+
+    truth = event_kv["truth"]
+    # Plot tracks
+    for particle_id in particle_ids:
+        # Skip ghost particles/hits
+        if particle_id == 0:
+            continue
+
+        track_points: DataFrame = truth.loc[truth.particle_id == particle_id]
+        track_points.insert(2, "r", track_points.apply(lambda x: (x.tx**2 + x.ty**2) ** 0.5, axis=1), True)
+        track_points: DataFrame = track_points.sort_values(by="r")
+        # TODO: sort by radius
+        ax3d.plot(track_points.tx, track_points.ty, track_points.tz, label=particle_id)
+        axxy.plot(track_points.tx, track_points.ty, label=particle_id)
+        axxz.plot(track_points.tx, track_points.tz, label=particle_id)
+        axyz.plot(track_points.ty, track_points.tz, label=particle_id)
+
+    if N and N <= 10:
+        ax3d.legend()
+        axxy.legend()
+        axxz.legend()
+        axyz.legend()
+    ax3d.legend()
+    event_names_str = get_event_names_str(truth)
+    fig.savefig(f"{event_names_str}_tracks.png", dpi=FIG_DPI)
+
+
 def histogram(
     x: Series,
     bins: int = 100,
@@ -132,7 +199,7 @@ def histogram(
 
 
 def plot_histograms(
-    event_kv: dict[str, DataFrame], errors: dict[str, DataFrame] | None = None, prefix: str | None = None
+    event_kv: dict[str, DataFrame], errors: dict[str, DataFrame] | None = None, prefix: str | None = None, **kwargs
 ):
     """Plot histograms of the hits"""
 
@@ -200,6 +267,7 @@ def visualize_event(
     do_table: bool = True,
     do_plot_hits: bool = True,
     do_plot_histogram: bool = True,
+    do_plot_tracks: bool = True,
     unique: bool = False,
     **kwargs,
 ):
@@ -211,14 +279,17 @@ def visualize_event(
     if do_table:
         print_heads(event_kv)
 
-    if not any([do_plot_hits, do_plot_histogram]):
+    if not any([do_plot_hits, do_plot_histogram, do_plot_tracks]):
         return
 
     # Add detector identifiers to true particle data
     event_kv["truth"] = truth.merge(hits[["hit_id", *DETECTOR_KEYS]], on="hit_id")
 
     if do_plot_hits:
-        plot_hits(event_kv, unique=unique)
+        plot_hits(event_kv, **kwargs)
 
-    if do_plot_histogram:
-        plot_histograms(event_kv)
+    # if do_plot_histogram:
+    #     plot_histograms(event_kv, **kwargs)
+
+    if do_plot_tracks:
+        plot_tracks(event_kv, **kwargs)

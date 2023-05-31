@@ -10,13 +10,13 @@ from trackml.dataset import load_event
 from _constants import CACHE_LOC
 
 
-def get_event_names(dir: str) -> set[str]:
+def get_event_names(dir: str) -> list[str]:
     """Get unique list of event names in directory `dir`"""
-    list = os.listdir(dir)
+    file_list = os.listdir(dir)
     event_names = set()
 
     # Go over all files in directory
-    for filename in list:
+    for filename in file_list:
         # Check if item is event file
         isCSV = filename[-4:] in [".csv", ".CSV"]
         if not isCSV:
@@ -25,7 +25,16 @@ def get_event_names(dir: str) -> set[str]:
         event_name = filename.split("-")[0]
         event_names.add(event_name)
 
+    event_names = list(event_names)
+    event_names.sort()
+
     return event_names
+
+
+def get_event_names_str(table: DataFrame):
+    event_names = list(table["event"].unique())
+    event_names_str = ", ".join(event_names)
+    return event_names_str
 
 
 def prepare_path(path: str):
