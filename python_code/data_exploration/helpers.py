@@ -7,6 +7,7 @@ from typing import Callable
 from functools import wraps
 from pandas import DataFrame
 from trackml.dataset import load_event
+from _constants import CACHE_LOC
 
 
 def get_event_names(dir: str) -> set[str]:
@@ -75,7 +76,7 @@ def pickle_cache(func: Callable, verbose: bool = False):
     @wraps(func)
     def wrapper(*args, **kwds):
         args_identifier = hashargs(*args, **kwds)
-        output = ".pickle_cache/" + args_identifier + ".pyc"
+        output = CACHE_LOC + args_identifier + ".pyc"
 
         try:
             data = load_pickle(output)

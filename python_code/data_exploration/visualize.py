@@ -1,6 +1,6 @@
 from pandas import DataFrame, Series
 from matplotlib import pyplot as plt
-from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES
+from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX
 
 
 def get_colors(data: DataFrame, mode: str = "volume_layer"):
@@ -139,6 +139,9 @@ def plot_histograms(
     # TODO:
     # [x] Charge distribution
     # [ ] Number of hits per particle
+    # px py pz distribution, vs hits
+    # ^-> look into 0 hits and 10 direction distribution
+
     # [ ] Number of hits per detector
     # [ ] Number of hits per layer
     # [ ] Number of hits per module
@@ -151,12 +154,45 @@ def plot_histograms(
     # [ ] Heatmap of hits in rz
     # [ ] Heatmap of hits in r
     # [ ] Heatmap of hits in phi
+    # momentum vs #hits
 
     # Single event
     for table, parameter in [["particles", "q"]]:
         fig = histogram(event_kv[table][parameter])
         fig.savefig(f"{prefix}_{table}_{parameter}_histogram.png", dpi=FIG_DPI)
         plt.close()
+
+
+def parameter_distribution(
+    events: list[tuple[DataFrame, DataFrame, DataFrame, DataFrame]], table_type: str, parameter: str
+):
+    """Plot the distribution of a parameter over all `events`"""
+    bins_df = DataFrame()
+    unique_values = set()
+
+    # Loop over events
+    for index, event in enumerate(events):
+        row = event[TABLE_INDEX[table_type]]
+
+        unique_values = unique_values.union(set(row[parameter].unique()))
+        bins = row[parameter].value_counts().sort_index()
+        # Rename for readability
+        bins.name = parameter + str(index)
+        # Join series to dataframe
+        bins_df = bins_df.merge(bins, how="outer", left_index=True, right_index=True)
+    print(bins_df)
+
+    hist_x = list(bins_df.index)
+    hist_y = list(bins_df.mean(axis=1))
+    hist_y_err = bins_df.std(axis=1)
+
+    # Plot charge distribution
+    fig = plt.figure(figsize=(FIG_X, FIG_Y))
+    ax = fig.add_subplot()
+    ax.set_title(f"Distribution of  { parameter } per {table_type} over { len(events) } events")
+    ax.bar(hist_x, hist_y, width=0.1)
+    ax.errorbar(hist_x, hist_y, yerr=hist_y_err, fmt="o", ecolor="black", capsize=2)
+    return fig
 
 
 def visualize_event(

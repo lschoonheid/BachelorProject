@@ -1,3 +1,4 @@
+# Kaggle CSV file constants
 DETECTOR_KEYS = ["volume_id", "layer_id", "module_id"]
 HITS_SAMPLES = None
 TABLE_INDEX = {
@@ -7,10 +8,12 @@ TABLE_INDEX = {
     "truth": 3,
 }
 
-
+# Local file constants
+CACHE_LOC = "/data/atlas/users/lschoonh/BachelorProject/data/.pickle_cache/"
 DATA_ROOT = "/data/atlas/users/lschoonh/BachelorProject/data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 
+# Matplotlib constants
 FIG_X = 10
 FIG_Y = FIG_X
 FIG_DPI = 600
