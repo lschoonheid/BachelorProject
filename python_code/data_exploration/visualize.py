@@ -1,4 +1,5 @@
-from pandas import DataFrame, Series
+import pandas as pd
+from pandas import CategoricalIndex, DataFrame, Index, Series
 from matplotlib import pyplot as plt
 from random import sample as random_sample
 from tqdm import tqdm
@@ -248,7 +249,7 @@ def plot_histograms(
     # [ ] Number of hits per particle per detector
     # [ ] Number of hits per particle per layer
     # [ ] Number of hits per particle per module
-    # [ ] Heatmap of hits in xyz
+    # [x] Heatmap of hits in xyz
     # [ ] Heatmap of hits in rphi
     # [ ] Heatmap of hits in rz
     # [ ] Heatmap of hits in r
@@ -263,22 +264,53 @@ def plot_histograms(
 
 
 def parameter_distribution(
-    events: list[tuple[DataFrame, DataFrame, DataFrame, DataFrame]], table_type: str, parameter: str
+    events: list[tuple[DataFrame, DataFrame, DataFrame, DataFrame]],
+    table_type: str,
+    parameter: str,
+    n_bins: int | None = None,
+    _min=None,
+    _max=None,
 ):
     """Plot the distribution of a parameter over all `events`"""
     bins_df = DataFrame()
     unique_values = set()
 
-    # Loop over events
-    for index, event in enumerate(events):
-        row = event[TABLE_INDEX[table_type]]
+    # get min and max value to use as bins
+    if _min is None or _max is None:
+        for event in events:
+            min_current = event[TABLE_INDEX[table_type]][parameter].min()
+            max_current = event[TABLE_INDEX[table_type]][parameter].max()
+            if _min is None or min_current < _min:
+                _min = min_current
+            if _max is None or max_current > _max:
+                _max = max_current
+    if n_bins is not None:
+        bins_index = pd.cut(Series([_min, _max]), bins=n_bins, retbins=True)[1]
 
-        unique_values = unique_values.union(set(row[parameter].unique()))
-        bins = row[parameter].value_counts().sort_index()
-        # Rename for readability
+    # Loop over events
+    for index, event in tqdm(enumerate(events), total=len(events), desc="Binning events"):
+        row = event[TABLE_INDEX[table_type]]
+        if n_bins is None:
+            # Use unique values as bins
+
+            unique_values = unique_values.union(set(row[parameter].unique()))
+            bins = row[parameter].value_counts().sort_index()
+            # Rename for readability
+            # Join series to dataframe
+        else:
+            # Use n_bins as bins
+            row["bin"] = pd.cut(row[parameter], bins=bins_index)  # type: ignore
+            groups = row.groupby("bin")
+            bins = groups.size()
+
         bins.name = parameter + str(index)
-        # Join series to dataframe
         bins_df = bins_df.merge(bins, how="outer", left_index=True, right_index=True)
+
+    if n_bins is not None:
+        idx: CategoricalIndex | Index = bins_df.index
+        bins_df.index = idx.map(lambda x: x.mid)
+
+    print(f"Bins of {parameter}:")
     print(bins_df)
 
     # Calculate mean and standard deviation
@@ -290,8 +322,12 @@ def parameter_distribution(
     fig = plt.figure(figsize=(FIG_X, FIG_Y))
     ax = fig.add_subplot()
     ax.set_title(f"Distribution of  { parameter } per {table_type} over { len(events) } events")
-    ax.bar(hist_x, hist_y, width=0.1)
-    ax.errorbar(hist_x, hist_y, yerr=hist_y_err, fmt="o", ecolor="black", capsize=2)
+
+    ax.set_xlabel(parameter)
+    ax.set_ylabel("count")
+    width = 0.4 * (hist_x[1] - hist_x[0])
+    ax.bar(hist_x, hist_y, width=width)
+    ax.errorbar(hist_x, hist_y, yerr=hist_y_err, fmt="o", markersize=1, ecolor="black", capsize=2)
     return fig
 
 
