@@ -189,7 +189,9 @@ def plot_tracks(
 
         # Sort hits by distance to origin
         track_points.insert(2, "r", track_points.apply(lambda x: (x.tx**2 + x.ty**2) ** 0.5, axis=1), True)
-        track_points: DataFrame = track_points.sort_values(by="r")
+        # Z-axis is timewise
+        track_points: DataFrame = track_points.sort_values(by=["r"])
+        # track_points: DataFrame = track_points.sort_values(by=["tz", "r"])
 
         # Plot track
         marker = "."
