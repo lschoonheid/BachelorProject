@@ -1,7 +1,9 @@
 from pandas import DataFrame, Series
 from matplotlib import pyplot as plt
 from random import sample as random_sample
-from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX
+from tqdm import tqdm
+
+from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX, PLOT_FONTSIZE, FIG_EXTENSION
 from helpers import get_event_names_str
 
 
@@ -90,8 +92,11 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False, **kwargs):
         else:
             data_subset = selected_data
 
+        event_names_str = get_event_names_str(data_subset)
+
         # Plot all combinations of axes
         for ax_keys in [[ax1, ax2, ax3], [ax1, ax2], [ax1, ax3], [ax2, ax3]]:
+            print("Plotting: " + str(ax_keys))
             ax_keys_str = "".join(ax_keys)
 
             # Plot hits for all color modes
@@ -100,7 +105,7 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False, **kwargs):
                 # Plot hits
                 fig = scatter(data_subset, *ax_keys, color_mode=color_mode)
                 fig.savefig(
-                    f"{get_event_names_str(data_subset)}_{table}_{ax_keys_str}_{color_mode}_scatter_sample.png",
+                    f"{event_names_str}_{table}_{ax_keys_str}_{color_mode}_scatter_sample{FIG_EXTENSION}",
                     dpi=FIG_DPI,
                 )
                 plt.close()
@@ -111,22 +116,26 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False, **kwargs):
 
             # Draw seperate plots for each unique value of `color_mode`
             for color_mode in color_modes:
+                # Skip too many/uninteresting unique values
+                if color_mode in ["particle_id", "module_id"]:
+                    continue
+
                 unique_values = selected_data[color_mode].unique()
-                for unique_value in unique_values:
+                for unique_value in tqdm(unique_values, desc=f"{color_mode}"):
                     isolated_detector_data = data_subset.loc[data_subset[color_mode] == unique_value]
                     # Since `color_mode` data is isolated, choose other color mode to distinguish data
                     anti_color_mode = color_modes[1 - color_modes.index(color_mode)]
 
                     fig = scatter(isolated_detector_data, *ax_keys, color_mode=anti_color_mode)
                     fig.savefig(
-                        f"{table}_{ax_keys_str}_{color_mode}_{unique_value}_vs_{anti_color_mode}_scatter.png",
+                        f"{event_names_str}_{table}_{ax_keys_str}_{color_mode}_{unique_value}_vs_{anti_color_mode}_scatter{FIG_EXTENSION}",
                         dpi=FIG_DPI,
                     )
                     plt.close()
 
 
 def plot_tracks(
-    event_kv: dict[str, DataFrame], event_id: str | None = None, N: int | None = 10, random=False, **kwargs
+    event_kv: dict[str, DataFrame], event_id: str | None = None, Nt: int | None = 10, random=False, **kwargs
 ):
     """Plot the tracks"""
     # Note: only works with truth data so far
@@ -138,53 +147,74 @@ def plot_tracks(
     axxz = fig.add_subplot(2, 2, 3)
     axyz = fig.add_subplot(2, 2, 4)
 
+    # Set titles
     ax3d.set_title("3D tracks")
     axxy.set_title("xy tracks")
     axxz.set_title("xz tracks")
     axyz.set_title("yz tracks")
 
+    # Set axis labels
+    # 3D
     ax3d.set_xlabel("x")
     ax3d.set_ylabel("y")
     ax3d.set_zlabel("z")
-
+    # X,Y
     axxy.set_xlabel("x")
     axxy.set_ylabel("y")
-
+    # X,Z
     axxz.set_xlabel("x")
     axxz.set_ylabel("z")
-
+    # Y,Z
     axyz.set_xlabel("y")
     axyz.set_ylabel("z")
 
     # Select a subset of the particles
     particle_ids = event_kv["particles"].particle_id.unique()
-    if N is not None:
-        particle_ids = random_sample(list(particle_ids), N) if random else particle_ids[:N]
+    if Nt is not None:
+        particle_ids = random_sample(list(particle_ids), Nt) if random else particle_ids[:Nt]
+    else:
+        Nt = len(particle_ids)
 
+    # Select true tracks
     truth = event_kv["truth"]
     # Plot tracks
-    for particle_id in particle_ids:
+    for particle_id in tqdm(particle_ids, desc="plotting tracks"):
         # Skip ghost particles/hits
         if particle_id == 0:
             continue
 
+        # Select all hits for this particular particle
         track_points: DataFrame = truth.loc[truth.particle_id == particle_id]
+
+        # Sort hits by distance to origin
         track_points.insert(2, "r", track_points.apply(lambda x: (x.tx**2 + x.ty**2) ** 0.5, axis=1), True)
         track_points: DataFrame = track_points.sort_values(by="r")
-        # TODO: sort by radius
-        ax3d.plot(track_points.tx, track_points.ty, track_points.tz, label=particle_id)
-        axxy.plot(track_points.tx, track_points.ty, label=particle_id)
-        axxz.plot(track_points.tx, track_points.tz, label=particle_id)
-        axyz.plot(track_points.ty, track_points.tz, label=particle_id)
 
-    if N and N <= 10:
-        ax3d.legend()
-        axxy.legend()
-        axxz.legend()
-        axyz.legend()
-    ax3d.legend()
+        # Plot track
+        marker = "."
+        markersize = 3
+        ax3d.plot(
+            track_points.tx,
+            track_points.ty,
+            track_points.tz,
+            label=particle_id,
+            marker=marker,
+            markersize=markersize,
+        )
+        axxy.plot(track_points.tx, track_points.ty, label=particle_id, marker=marker, markersize=markersize)
+        axxz.plot(track_points.tx, track_points.tz, label=particle_id, marker=marker, markersize=markersize)
+        axyz.plot(track_points.ty, track_points.tz, label=particle_id, marker=marker, markersize=markersize)
+
+    # Add legend if N is small enough
+
+    opacity = 0.2
+    if Nt and Nt <= 20:
+        for ax in [ax3d, axxy, axxz, axyz]:
+            ax.legend(fontsize=PLOT_FONTSIZE, framealpha=opacity)
+
+    # Save figure
     event_names_str = get_event_names_str(truth)
-    fig.savefig(f"{event_names_str}_tracks.png", dpi=FIG_DPI)
+    fig.savefig(f"{event_names_str}_tracks_n{Nt}{FIG_EXTENSION}", dpi=FIG_DPI)
 
 
 def histogram(
@@ -226,7 +256,7 @@ def plot_histograms(
     # Single event
     for table, parameter in [["particles", "q"]]:
         fig = histogram(event_kv[table][parameter])
-        fig.savefig(f"{prefix}_{table}_{parameter}_histogram.png", dpi=FIG_DPI)
+        fig.savefig(f"{prefix}_{table}_{parameter}_histogram{FIG_EXTENSION}", dpi=FIG_DPI)
         plt.close()
 
 
@@ -249,6 +279,7 @@ def parameter_distribution(
         bins_df = bins_df.merge(bins, how="outer", left_index=True, right_index=True)
     print(bins_df)
 
+    # Calculate mean and standard deviation
     hist_x = list(bins_df.index)
     hist_y = list(bins_df.mean(axis=1))
     hist_y_err = bins_df.std(axis=1)
@@ -268,7 +299,6 @@ def visualize_event(
     do_plot_hits: bool = True,
     do_plot_histogram: bool = True,
     do_plot_tracks: bool = True,
-    unique: bool = False,
     **kwargs,
 ):
     """Pipe for visualizing a single event"""
@@ -288,6 +318,7 @@ def visualize_event(
     if do_plot_hits:
         plot_hits(event_kv, **kwargs)
 
+    # Deprecated
     # if do_plot_histogram:
     #     plot_histograms(event_kv, **kwargs)
 

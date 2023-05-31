@@ -4,7 +4,7 @@ from pandas import DataFrame
 from tqdm import tqdm
 
 # Local imports
-from _constants import DATA_SAMPLE, FIG_DPI
+from _constants import DATA_SAMPLE, FIG_DPI, FIG_EXTENSION
 from helpers import get_event_names, load_event_cached
 from visualize import parameter_distribution
 
@@ -19,12 +19,12 @@ def run(dir=DATA_SAMPLE, N=None):
 
     # Charge distribution
     fig = parameter_distribution(n_events, "particles", "q")
-    fig.savefig(f"charge_distribution.png", dpi=FIG_DPI)
+    fig.savefig(f"charge_distribution{FIG_EXTENSION}", dpi=FIG_DPI)
     plt.close()
 
     # Hits per particle
     fig = parameter_distribution(n_events, "particles", "nhits")
-    fig.savefig(f"hits_per_particle_distribution.png", dpi=FIG_DPI)
+    fig.savefig(f"hits_per_particle_distribution{FIG_EXTENSION}", dpi=FIG_DPI)
     plt.close()
 
 
