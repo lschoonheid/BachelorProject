@@ -171,6 +171,7 @@ def plot_tracks(
     # Select a subset of the particles
     particle_ids = event_kv["particles"].particle_id.unique()
     if Nt is not None:
+        Nt = min(Nt, len(particle_ids))
         particle_ids = random_sample(list(particle_ids), Nt) if random else particle_ids[:Nt]
     else:
         Nt = len(particle_ids)
@@ -208,7 +209,7 @@ def plot_tracks(
     # Add legend if N is small enough
 
     opacity = 0.2
-    if Nt and Nt <= 20:
+    if Nt <= 20:
         for ax in [ax3d, axxy, axxz, axyz]:
             ax.legend(fontsize=PLOT_FONTSIZE, framealpha=opacity)
 
@@ -294,7 +295,7 @@ def parameter_distribution(
 
 
 def visualize_event(
-    loaded_event: tuple[DataFrame, DataFrame, DataFrame, DataFrame],
+    event_kv: dict[str, DataFrame],
     do_table: bool = True,
     do_plot_hits: bool = True,
     do_plot_histogram: bool = True,
@@ -303,8 +304,6 @@ def visualize_event(
 ):
     """Pipe for visualizing a single event"""
     # Load a single event
-    hits, cells, particles, truth = loaded_event
-    event_kv = {"hits": hits, "cells": cells, "particles": particles, "truth": truth}
 
     if do_table:
         print_heads(event_kv)
@@ -312,8 +311,8 @@ def visualize_event(
     if not any([do_plot_hits, do_plot_histogram, do_plot_tracks]):
         return
 
-    # Add detector identifiers to true particle data
-    event_kv["truth"] = truth.merge(hits[["hit_id", *DETECTOR_KEYS]], on="hit_id")
+    # # Add detector identifiers to true particle data
+    # event_kv["truth"] = truth.merge(hits[["hit_id", *DETECTOR_KEYS]], on="hit_id")
 
     if do_plot_hits:
         plot_hits(event_kv, **kwargs)
