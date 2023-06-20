@@ -9,9 +9,9 @@ from helpers import get_event_names_str
 
 # TODO:
 # [x] Charge distribution
-# [ ] Number of hits per particle
+# [x] Number of hits per particle
 # [x] px py pz distribution, vs hits
-# ^-> look into 0 hits and 10 direction distribution
+#   [ ]look into 0 hits and 10 direction distribution
 # [x] distribution of weight per hit
 
 # [ ] Number of hits per detector
@@ -30,7 +30,7 @@ from helpers import get_event_names_str
 
 # [ ] Plot some high energy tracks
 # [ ] Plot some low energy tracks
-# [ ] Total momentum vs #hits
+# [x] Total momentum vs #hits
 
 
 def get_colors(data: DataFrame, mode: str = "volume_layer"):
