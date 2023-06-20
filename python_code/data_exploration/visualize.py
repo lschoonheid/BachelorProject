@@ -301,6 +301,7 @@ def parameter_distribution(
     events: list[tuple[DataFrame, DataFrame, DataFrame, DataFrame]],
     table_type: str,
     parameter: str,
+    weight_method: str | None = None,
     n_bins: int | None = None,
     _min=None,
     _max=None,
@@ -324,20 +325,31 @@ def parameter_distribution(
     # Loop over events
     for index, event in tqdm(enumerate(events), total=len(events), desc="Binning events"):
         row = event[TABLE_INDEX[table_type]]
+
+        if weight_method == "value":
+            row = row.copy(deep=True)
+            row[parameter] = row[parameter] * row["weight"]
+
+        # Put into bins
         if n_bins is None:
             # Use unique values as bins
-
-            unique_values = unique_values.union(set(row[parameter].unique()))
-            bins = row[parameter].value_counts().sort_index()
-            # Rename for readability
-            # Join series to dataframe
+            groups = row.groupby(parameter)
         else:
-            # Use n_bins as bins
+            # Split in `n_bins` bins
             row["bin"] = pd.cut(row[parameter], bins=bins_index)  # type: ignore
             groups = row.groupby("bin")
-            bins = groups.size()
 
+        bin_sizes = groups.size()
+
+        if weight_method in ["group", "importance"]:
+            bin_weights = groups["weight"].sum()
+            bins = bin_weights if weight_method == "importance" else bin_weights * bin_sizes
+        else:
+            bins = bin_sizes
+
+        # Rename for readability
         bins.name = parameter + str(index)
+        # Join series to dataframe
         bins_df = bins_df.merge(bins, how="outer", left_index=True, right_index=True)
 
     if n_bins is not None:
@@ -355,7 +367,9 @@ def parameter_distribution(
     # Plot charge distribution
     fig = plt.figure(figsize=(FIG_X, FIG_Y))
     ax = fig.add_subplot()
-    ax.set_title(f"Distribution of  { parameter } per {table_type} over { len(events) } events")
+
+    weight_method_tag = f" (weighted: {weight_method})" if weight_method else ""
+    ax.set_title(f"Distribution of  { parameter } per {table_type} over { len(events) } events {weight_method_tag}")
 
     ax.set_xlabel(parameter)
     ax.set_ylabel("count")
