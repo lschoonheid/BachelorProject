@@ -1,4 +1,6 @@
 import argparse
+
+import numpy as np
 from helpers import get_event_names, load_event_cached
 from random import choice as random_choice
 from pandas import DataFrame
@@ -28,6 +30,12 @@ def sample_event(
 
     # Load event
     hits, cells, particles, truth = load_event_cached(event_path)
+
+    # TODO: Remove this
+    ax_name = "tp"
+    truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
+    truth = truth[truth["tp"] > 10**5]
+
     event_kv = {"hits": hits, "cells": cells, "particles": particles, "truth": truth}
 
     if raw:

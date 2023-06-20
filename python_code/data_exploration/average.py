@@ -62,6 +62,12 @@ def run(
             truth = event[TABLE_INDEX["truth"]]
             truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
 
+            exceptions = truth.loc[truth["tp"] >= 10**5]
+            print(exceptions["weight"].head(100))
+            print(truth.head(100))
+
+            pass
+
         # # Full distribution
         # fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100)
         # fig.savefig(f"hits_{ax_name}_distribution_full{FIG_EXTENSION}", dpi=FIG_DPI)

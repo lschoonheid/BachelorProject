@@ -97,7 +97,7 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False, **kwargs):
     # TODO cartesian product of all combinations of ids
     color_modes = DETECTOR_KEYS
     # Plot hits for all data types
-    for table in ["hits", "truth"]:
+    for table in ["truth", "hits"]:
         # Define axis keys
         match table:
             case "hits":
@@ -108,6 +108,7 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False, **kwargs):
                 ax1 = "tx"
                 ax2 = "ty"
                 ax3 = "tz"
+
             case _:
                 raise ValueError("Data type not recognized")
         selected_data = event_kv[table]
@@ -345,7 +346,6 @@ def visualize_event(
     **kwargs,
 ):
     """Pipe for visualizing a single event"""
-    # Load a single event
 
     if do_table:
         print_heads(event_kv)
