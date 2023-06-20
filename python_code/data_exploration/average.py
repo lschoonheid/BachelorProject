@@ -9,13 +9,14 @@ from tqdm import tqdm
 # Local imports
 from _constants import DATA_SAMPLE, FIG_DPI, FIG_EXTENSION, TABLE_INDEX
 from helpers import get_event_names, load_event_cached
-from visualize import parameter_distribution, histogram
+from visualize import parameter_distribution, histogram, scatter
 
 
 def run(
     dir=DATA_SAMPLE,
     N=None,
     do_n_particles=False,
+    do_cell_value=False,
     do_charge=False,
     do_hits_n=False,
     do_hits_ax=False,
@@ -39,6 +40,23 @@ def run(
         fig.axes[0].set_title("Number of particles per event")
 
         fig.savefig(f"n_particles_histogram{FIG_EXTENSION}", dpi=FIG_DPI)
+        plt.close()
+
+    # Cell value distribution
+    if do_cell_value:
+        # TODO: remove this
+        # for event in n_events:
+        #     ax_name = "tp"
+        #     truth = event[TABLE_INDEX["truth"]]
+        #     truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
+        #     truth.drop(truth.loc[truth["tp"] < 10**5].index, inplace=True)
+
+        #     hit_ids = truth["hit_id"].values
+        #     cells = event[TABLE_INDEX["cells"]]
+        #     cells.drop(cells.loc[~cells["hit_id"].isin(hit_ids)].index, inplace=True)
+
+        fig = parameter_distribution(n_events, "cells", "value", n_bins=100)
+        fig.savefig(f"cell_value_distribution{FIG_EXTENSION}", dpi=FIG_DPI)
         plt.close()
 
     # Charge distribution
@@ -113,6 +131,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="data_exploration", description="Explore the data")
     parser.add_argument("-d", dest="dir", type=str, default=DATA_SAMPLE, help="Directory to load events from")
     parser.add_argument("--n_p", dest="do_n_particles", action="store_true", help="Plot n_particles distribution")
+    parser.add_argument("--cell", dest="do_cell_value", action="store_true", help="Plot cell value distribution")
     parser.add_argument("--weight", dest="do_weight", action="store_true", help="Plot weight distribution")
     parser.add_argument("--hits_n", dest="do_hits_n", action="store_true", help="Plot nhits distribution")
     parser.add_argument("--hits_ax", dest="do_hits_ax", action="store_true", help="Plot hits over ax distribution")
@@ -126,6 +145,7 @@ if __name__ == "__main__":
 
     if kwargs.pop("do_all"):
         kwargs["do_n_particles"] = True
+        kwargs["do_cell_value"] = True
         kwargs["do_weight"] = True
         kwargs["do_hits_n"] = True
         kwargs["do_hits_ax"] = True
