@@ -3,18 +3,19 @@
 import argparse
 from matplotlib import pyplot as plt
 import numpy as np
-from pandas import DataFrame
+from pandas import DataFrame, Series
 from tqdm import tqdm
 
 # Local imports
 from _constants import DATA_SAMPLE, FIG_DPI, FIG_EXTENSION, TABLE_INDEX
 from helpers import get_event_names, load_event_cached
-from visualize import parameter_distribution
+from visualize import parameter_distribution, histogram
 
 
 def run(
     dir=DATA_SAMPLE,
     N=None,
+    do_n_particles=False,
     do_charge=False,
     do_hits_n=False,
     do_hits_ax=False,
@@ -28,6 +29,17 @@ def run(
     n_events: list[tuple[DataFrame, DataFrame, DataFrame, DataFrame]] = [
         load_event_cached(dir + name) for name in tqdm(event_names, desc="Loading events")
     ]
+
+    # Number of particles per event
+    if do_n_particles:
+        n_particles = Series([len(event[TABLE_INDEX["particles"]]) for event in n_events])
+        fig = histogram(n_particles, bins=50)
+        fig.axes[0].set_xlabel("Number of particles")
+        fig.axes[0].set_ylabel("Number of events")
+        fig.axes[0].set_title("Number of particles per event")
+
+        fig.savefig(f"n_particles_histogram{FIG_EXTENSION}", dpi=FIG_DPI)
+        plt.close()
 
     # Charge distribution
     if do_charge:
@@ -100,10 +112,11 @@ def run(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="data_exploration", description="Explore the data")
     parser.add_argument("-d", dest="dir", type=str, default=DATA_SAMPLE, help="Directory to load events from")
+    parser.add_argument("--n_p", dest="do_n_particles", action="store_true", help="Plot n_particles distribution")
     parser.add_argument("--weight", dest="do_weight", action="store_true", help="Plot weight distribution")
     parser.add_argument("--hits_n", dest="do_hits_n", action="store_true", help="Plot nhits distribution")
     parser.add_argument("--hits_ax", dest="do_hits_ax", action="store_true", help="Plot hits over ax distribution")
-    parser.add_argument("--p_ax", dest="do_momentum_ax", action="store_true", help="Plot hits over ax distribution")
+    parser.add_argument("--p_ax", dest="do_momentum_ax", action="store_true", help="Plot momentum over ax distribution")
     parser.add_argument("--p_norm", dest="do_momentum_norm", action="store_true", help="Plot hits over ax distribution")
     parser.add_argument("-q", "--charge", dest="do_charge", action="store_true", help="Plot charge distribution")
     parser.add_argument("--all", dest="do_all", action="store_true", help="Run all visualizations")
@@ -112,6 +125,7 @@ if __name__ == "__main__":
     kwargs = vars(args)
 
     if kwargs.pop("do_all"):
+        kwargs["do_n_particles"] = True
         kwargs["do_weight"] = True
         kwargs["do_hits_n"] = True
         kwargs["do_hits_ax"] = True
