@@ -27,6 +27,11 @@ def run(dir=DATA_SAMPLE, N=None):
     fig.savefig(f"hits_per_particle_distribution{FIG_EXTENSION}", dpi=FIG_DPI)
     plt.close()
 
+    # Weight
+    fig = parameter_distribution(n_events, "truth", "weight", n_bins=100, _min=0, _max=0.00005)
+    fig.savefig(f"hits_per_particle_distribution{FIG_EXTENSION}", dpi=FIG_DPI)
+    plt.close()
+
     # Hits over axes distribution
     axes = ["tx", "ty", "tz"]
     for ax in axes:
