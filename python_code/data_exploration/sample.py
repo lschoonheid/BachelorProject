@@ -65,6 +65,7 @@ if __name__ == "__main__":
     parser.add_argument("--hits", dest="do_plot_hits", action="store_true", help="Plot the hits")
     # parser.add_argument("--hist", dest="do_plot_histogram", action="store_true", help="Plot histograms")
     parser.add_argument("--tracks", dest="do_plot_tracks", action="store_true", help="Plot tracks")
+    parser.add_argument("--versus", dest="do_versus_scatter", action="store_true", help="Plot cell value versus tp")
 
     args = parser.parse_args()
     kwargs = vars(args)

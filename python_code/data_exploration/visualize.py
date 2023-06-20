@@ -87,25 +87,19 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
 def versus_scatter(
     event_kv: dict[str, DataFrame], table_0: str, ax_0: str, table_1: str, ax_1: str, join_on: str = "hit_id"
 ):
-    """Plot a scatter plot of the hits in either 2D or 3D"""
+    """Plot a scatter of two tables versus each other"""
     # Create figure
     fig = plt.figure(figsize=(FIG_X, FIG_Y))
     ax_title_str = f"{table_0} {ax_0} vs {table_1} {ax_1}"
 
-    # Choose columns
+    # Choose tables
     df_0 = event_kv[table_0]
     df_1 = event_kv[table_1]
 
-    columns_0 = df_0[ax_0]
-    columns_1 = df_1[ax_1]
-
-    print(df_0)
-    print(df_1)
-
+    # Merge columns
     merged = df_0.merge(df_1, on=join_on)[[ax_0, ax_1]]
-    print(merged)
 
-    # Choose axes and projection
+    # Choose axes
     ax = fig.add_subplot()
     ax.set_xlabel(ax_0)
     ax.set_ylabel(ax_1)
@@ -371,6 +365,22 @@ def parameter_distribution(
     return fig
 
 
+def do_cell_vs_tp(event_kv: dict[str, DataFrame]):
+    """Plot cell value versus true momentum norm"""
+    ax_name = "tp"
+    truth = event_kv["truth"]
+    truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
+    # truth.drop(truth.loc[truth["tp"] < 10**5].index, inplace=True)
+
+    cells = event_kv["cells"]
+    summed_value = (cells.groupby("hit_id", as_index=False).sum())[["hit_id", "value"]]
+    event_kv["cells"] = summed_value
+
+    fig = versus_scatter(event_kv, "truth", ax_name, "cells", "value")
+    fig.savefig(f"{'truth'}_{'tp'}_versus_{'cells'}_{'value'}_scatter{FIG_EXTENSION}", dpi=FIG_DPI)
+    plt.close()
+
+
 def visualize_event(
     event_kv: dict[str, DataFrame],
     do_table: bool = True,
@@ -397,3 +407,6 @@ def visualize_event(
 
     if do_plot_tracks:
         plot_tracks(event_kv, **kwargs)
+
+    if do_versus_scatter:
+        do_cell_vs_tp(event_kv)
