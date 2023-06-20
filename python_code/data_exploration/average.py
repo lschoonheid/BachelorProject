@@ -44,17 +44,6 @@ def run(
 
     # Cell value distribution
     if do_cell_value:
-        # TODO: remove this
-        # for event in n_events:
-        #     ax_name = "tp"
-        #     truth = event[TABLE_INDEX["truth"]]
-        #     truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
-        #     truth.drop(truth.loc[truth["tp"] < 10**5].index, inplace=True)
-
-        #     hit_ids = truth["hit_id"].values
-        #     cells = event[TABLE_INDEX["cells"]]
-        #     cells.drop(cells.loc[~cells["hit_id"].isin(hit_ids)].index, inplace=True)
-
         fig = parameter_distribution(n_events, "cells", "value", n_bins=100)
         fig.savefig(f"cell_value_distribution{FIG_EXTENSION}", dpi=FIG_DPI)
         plt.close()
