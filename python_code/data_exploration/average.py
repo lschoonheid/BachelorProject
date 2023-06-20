@@ -29,6 +29,16 @@ def run(
         load_event_cached(dir + name) for name in tqdm(event_names, desc="Loading events")
     ]
 
+    # TODO: remove this
+    for event in n_events:
+        ax_name = "tp"
+
+        truth = event[TABLE_INDEX["truth"]]
+        truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
+
+        truth.drop(truth.loc[truth["tp"] < 10**5].index, inplace=True)
+        print(truth.head(100))
+
     # Charge distribution
     if do_charge:
         fig = parameter_distribution(n_events, "particles", "q")
@@ -58,15 +68,9 @@ def run(
     if do_momentum_norm:
         ax_name = "tp"
         # Insert momentum norm
-        for event in n_events:
-            truth = event[TABLE_INDEX["truth"]]
-            truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
-
-            exceptions = truth.loc[truth["tp"] >= 10**5]
-            print(exceptions["weight"].head(100))
-            print(truth.head(100))
-
-            pass
+        # for event in n_events:
+        #     truth = event[TABLE_INDEX["truth"]]
+        #     truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
 
         # # Full distribution
         # fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100)
