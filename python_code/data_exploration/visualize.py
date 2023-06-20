@@ -7,6 +7,29 @@ from tqdm import tqdm
 from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX, PLOT_FONTSIZE, FIG_EXTENSION
 from helpers import get_event_names_str
 
+# TODO:
+# [x] Charge distribution
+# [ ] Number of hits per particle
+# px py pz distribution, vs hits
+# ^-> look into 0 hits and 10 direction distribution
+# [x] distribution of weight per hit
+
+# [ ] Number of hits per detector
+# [ ] Number of hits per layer
+# [ ] Number of hits per module
+# [ ] Number of hits per particle
+# [ ] Number of hits per particle per detector
+# [ ] Number of hits per particle per layer
+# [ ] Number of hits per particle per module
+# [x] Heatmap of hits in xyz
+# [ ] Heatmap of hits in rphi
+# [ ] Heatmap of hits in rz
+# [ ] Heatmap of hits in r
+# [ ] Heatmap of hits in phi
+# Plot some high energy tracks
+# Plot some low energy tracks
+# momentum vs #hits
+
 
 def get_colors(data: DataFrame, mode: str = "volume_layer"):
     """Map data to colors"""
@@ -236,26 +259,6 @@ def plot_histograms(
 ):
     """Plot histograms of the hits"""
 
-    # TODO:
-    # [x] Charge distribution
-    # [ ] Number of hits per particle
-    # px py pz distribution, vs hits
-    # ^-> look into 0 hits and 10 direction distribution
-
-    # [ ] Number of hits per detector
-    # [ ] Number of hits per layer
-    # [ ] Number of hits per module
-    # [ ] Number of hits per particle
-    # [ ] Number of hits per particle per detector
-    # [ ] Number of hits per particle per layer
-    # [ ] Number of hits per particle per module
-    # [x] Heatmap of hits in xyz
-    # [ ] Heatmap of hits in rphi
-    # [ ] Heatmap of hits in rz
-    # [ ] Heatmap of hits in r
-    # [ ] Heatmap of hits in phi
-    # momentum vs #hits
-
     # Single event
     for table, parameter in [["particles", "q"]]:
         fig = histogram(event_kv[table][parameter])
@@ -347,9 +350,6 @@ def visualize_event(
 
     if not any([do_plot_hits, do_plot_histogram, do_plot_tracks]):
         return
-
-    # # Add detector identifiers to true particle data
-    # event_kv["truth"] = truth.merge(hits[["hit_id", *DETECTOR_KEYS]], on="hit_id")
 
     if do_plot_hits:
         plot_hits(event_kv, **kwargs)
