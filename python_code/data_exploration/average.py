@@ -29,16 +29,6 @@ def run(
         load_event_cached(dir + name) for name in tqdm(event_names, desc="Loading events")
     ]
 
-    # TODO: remove this
-    for event in n_events:
-        ax_name = "tp"
-
-        truth = event[TABLE_INDEX["truth"]]
-        truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
-
-        truth.drop(truth.loc[truth["tp"] < 10**5].index, inplace=True)
-        print(truth.head(100))
-
     # Charge distribution
     if do_charge:
         fig = parameter_distribution(n_events, "particles", "q")
@@ -68,24 +58,24 @@ def run(
     if do_momentum_norm:
         ax_name = "tp"
         # Insert momentum norm
-        # for event in n_events:
-        #     truth = event[TABLE_INDEX["truth"]]
-        #     truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
+        for event in n_events:
+            truth = event[TABLE_INDEX["truth"]]
+            truth.insert(5, ax_name, np.linalg.norm(truth[["tpx", "tpy", "tpz"]].values, axis=1))
 
-        # # Full distribution
-        # fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100)
-        # fig.savefig(f"hits_{ax_name}_distribution_full{FIG_EXTENSION}", dpi=FIG_DPI)
-        # plt.close()
+        # Full distribution
+        fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100)
+        fig.savefig(f"hits_{ax_name}_distribution_full{FIG_EXTENSION}", dpi=FIG_DPI)
+        plt.close()
 
-        # # Zoomed in distribution
-        # fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100, _min=0, _max=20)
-        # fig.savefig(f"hits_{ax_name}_distribution_zoom{FIG_EXTENSION}", dpi=FIG_DPI)
-        # plt.close()
+        # Zoomed in distribution
+        fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100, _min=0, _max=20)
+        fig.savefig(f"hits_{ax_name}_distribution_zoom{FIG_EXTENSION}", dpi=FIG_DPI)
+        plt.close()
 
-        # # Zoomed twice in distribution
-        # fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100, _min=0, _max=5)
-        # fig.savefig(f"hits_{ax_name}_distribution_zoom_x2{FIG_EXTENSION}", dpi=FIG_DPI)
-        # plt.close()
+        # Zoomed twice in distribution
+        fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100, _min=0, _max=5)
+        fig.savefig(f"hits_{ax_name}_distribution_zoom_x2{FIG_EXTENSION}", dpi=FIG_DPI)
+        plt.close()
 
         # Zoomed shifted in distribution
         fig = parameter_distribution(n_events, "truth", ax_name, n_bins=100, _min=10**6 - 1, _max=10**6 + 1)
