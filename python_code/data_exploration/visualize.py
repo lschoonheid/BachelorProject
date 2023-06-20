@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from pandas import CategoricalIndex, DataFrame, Index, Series
 from matplotlib import pyplot as plt
@@ -79,6 +80,39 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
 
     ax.set_title(f"Scatter plot of { ax_title_str } coordinates")
     ax.legend(*scatter.legend_elements(), title=color_mode)
+
+    return fig
+
+
+def versus_scatter(
+    event_kv: dict[str, DataFrame], table_0: str, ax_0: str, table_1: str, ax_1: str, join_on: str = "hit_id"
+):
+    """Plot a scatter plot of the hits in either 2D or 3D"""
+    # Create figure
+    fig = plt.figure(figsize=(FIG_X, FIG_Y))
+    ax_title_str = f"{table_0} {ax_0} vs {table_1} {ax_1}"
+
+    # Choose columns
+    df_0 = event_kv[table_0]
+    df_1 = event_kv[table_1]
+
+    columns_0 = df_0[ax_0]
+    columns_1 = df_1[ax_1]
+
+    print(df_0)
+    print(df_1)
+
+    merged = df_0.merge(df_1, on=join_on)[[ax_0, ax_1]]
+    print(merged)
+
+    # Choose axes and projection
+    ax = fig.add_subplot()
+    ax.set_xlabel(ax_0)
+    ax.set_ylabel(ax_1)
+
+    scatter = ax.scatter(merged[ax_0], merged[ax_1], s=0.1)
+
+    ax.set_title(f"Scatter plot of { ax_title_str }")
 
     return fig
 
@@ -343,6 +377,7 @@ def visualize_event(
     do_plot_hits: bool = True,
     do_plot_histogram: bool = True,
     do_plot_tracks: bool = True,
+    do_versus_scatter: bool = True,
     **kwargs,
 ):
     """Pipe for visualizing a single event"""
