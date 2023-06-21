@@ -308,7 +308,6 @@ def parameter_distribution(
 ):
     """Plot the distribution of a parameter over all `events`"""
     bins_df = DataFrame()
-    unique_values = set()
 
     # get min and max value to use as bins
     if _min is None or _max is None:
