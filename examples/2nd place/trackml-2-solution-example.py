@@ -16,18 +16,23 @@ from tqdm import tqdm
 
 # keras.tf.config.list_physical_devices("GPU")
 
-DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject"
-DATA_ROOT = DIRECTORY + "BachelorProject/data/"
+DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
+DATA_ROOT = DIRECTORY + "data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 prefix = DATA_SAMPLE
-import zipfile
+
 
 # Hyperparameters
-N_EVENTS = 2
+# N_EVENTS = 2
+N_EVENTS = 1
+EVENT_OFFSET = 10
+EVENT_RANGE = range(EVENT_OFFSET, EVENT_OFFSET + N_EVENTS)
 # Learning rates
 LR_0, LR_1, LR_2 = -5, -4, -5
 LEARNING_RATES = [10 ** (lr) for lr in [LR_0, LR_1, LR_2]]
+# BATCH_SIZE = 8000
 BATCH_SIZE = 8000
+
 CROSS_VALIDATION = 0.05
 E_0, E_1, E_2 = 1, 20, 3
 EPOCHS = [E_0, E_1, E_2]
@@ -43,30 +48,46 @@ def get_event(event):
     return hits, cells, truth, particles
 
 
-def get_train():
-    Train = []
-    offset = 10
+def get_particle_ids(truth):
+    particle_ids = truth.particle_id.unique()
+    particle_ids = particle_ids[np.where(particle_ids != 0)[0]]
+    return particle_ids
 
-    for i in tqdm(range(offset, offset + N_EVENTS)):
-        # Load event
-        event = "event0000010%02d" % i
-        hits, cells, truth, particles = get_event(event)
 
-        # Take #cells hit per hit_id
-        hit_cells = cells.groupby(["hit_id"]).value.count().values
-        # Take cell value sum per hit_id
-        hit_value = cells.groupby(["hit_id"]).value.sum().values
-        # hstack hit features per hit_id
-        features = np.hstack(
-            (
-                hits[["x", "y", "z"]] / 1000,
-                hit_cells.reshape(len(hit_cells), 1) / 10,  # type: ignore
-                hit_value.reshape(len(hit_cells), 1),  # type: ignore
-            )
+def get_features(hits, cells):
+    # Take #cells hit per hit_id
+    hit_cells = cells.groupby(["hit_id"]).value.count().values
+    # Take cell value sum per hit_id
+    hit_value = cells.groupby(["hit_id"]).value.sum().values
+    # hstack hit features per hit_id
+    features = np.hstack(
+        (
+            hits[["x", "y", "z"]] / 1000,
+            hit_cells.reshape(len(hit_cells), 1) / 10,  # type: ignore
+            hit_value.reshape(len(hit_cells), 1),  # type: ignore
         )
-        # Take all valid track ids
-        particle_ids = truth.particle_id.unique()
-        particle_ids = particle_ids[np.where(particle_ids != 0)[0]]
+    )
+    return features
+
+
+def get_train_0(size, n, truth, features):
+    i = np.random.randint(n, size=size)
+    j = np.random.randint(n, size=size)
+    p_id = truth.particle_id.values
+    pair = np.hstack((i.reshape(size, 1), j.reshape(size, 1)))
+    pair = pair[((p_id[i] == 0) | (p_id[i] != p_id[j]))]
+
+    Train0 = np.hstack((features[pair[:, 0]], features[pair[:, 1]], np.zeros((len(pair), 1))))
+    return Train0
+
+
+def get_train(event_range=EVENT_RANGE, features=None):
+    Train = []
+    for i in tqdm(event_range):
+        event_name = "event0000010%02d" % i
+        hits, cells, truth, particles = get_event(event_name)
+        features = get_features(hits, cells)
+        particle_ids = get_particle_ids(truth)
 
         # Take all pairs of hits that belong to the same track id (cartesian product)
         pair1 = []
@@ -94,15 +115,9 @@ def get_train():
         # TODO: this can be done more efficiently
         n = len(hits)
         size = len(Train1) * 3
-        p_id = truth.particle_id.values
-        i = np.random.randint(n, size=size)
-        j = np.random.randint(n, size=size)
-        pair = np.hstack((i.reshape(size, 1), j.reshape(size, 1)))
-        pair = pair[((p_id[i] == 0) | (p_id[i] != p_id[j]))]
+        Train0 = get_train_0(size, n, truth, features)
 
-        Train0 = np.hstack((features[pair[:, 0]], features[pair[:, 1]], np.zeros((len(pair), 1))))
-
-        print(event, Train1.shape)
+        print(event_name, Train1.shape)
 
         Train = np.vstack((Train, Train0))
     del Train0, Train1  # type: ignore
@@ -110,6 +125,36 @@ def get_train():
     np.random.shuffle(Train)
     print(Train.shape)  # type: ignore
     return Train
+
+
+def get_hard_negatives(Train, model, event_range=EVENT_RANGE):
+    Train_hard = []
+    for i in tqdm(event_range):
+        # Load event
+        event = "event0000010%02d" % i
+        hits, cells, truth, particles = get_event(event)
+        features = get_features(hits, cells)
+        particle_ids = get_particle_ids(truth)
+
+        # Take all pairs of hits that do not belong to the same track id
+        # TODO this is duplicate code
+        size = 30000000
+        n = len(truth)
+
+        Train0 = get_train_0(size, n, truth, features)
+
+        pred = model.predict(Train0[:, :-1], batch_size=20000)
+        s = np.where(pred > 0.5)[0]
+
+        print(event, len(Train0), len(s))
+
+        if len(Train_hard) == 0:
+            Train_hard = Train0[s]
+        else:
+            Train_hard = np.vstack((Train_hard, Train0[s]))
+    del Train0  # type: ignore
+    print(Train_hard.shape)  # type: ignore
+    return Train_hard
 
 
 def init_model(fs=10):
@@ -123,7 +168,7 @@ def init_model(fs=10):
     return model
 
 
-def do_train(model, Train, lr, epochs, batch_size, cross_validation, loss_function, epochs_passed=0):
+def do_train(model, Train, lr, epochs, batch_size, cross_validation, loss_function, callbacks=[], epochs_passed=0):
     model.compile(loss=[loss_function], optimizer=Adam(learning_rate=10 ** (lr)), metrics=["accuracy"])
     History = model.fit(
         x=Train[:, :-1],  # type: ignore
@@ -134,8 +179,13 @@ def do_train(model, Train, lr, epochs, batch_size, cross_validation, loss_functi
         verbose=2,  # type: ignore
         validation_split=cross_validation,
         shuffle=True,
+        callbacks=callbacks,
     )
     return History
+
+
+def _get_log_dir():
+    return DIRECTORY + "training_logs/2nd_place_example/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 if __name__ == "__main__":
@@ -147,81 +197,21 @@ if __name__ == "__main__":
     epochs_passed = 0
 
     # Train model
+
+    # Prerpare tensorboard
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=_get_log_dir(), histogram_freq=1)
     # Train regular
-    log_dir = DATA_ROOT + "/training_logs/2nd_place_example/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     for lr, epochs in zip(LEARNING_RATES, EPOCHS):
-        # Prerpare tensorboard
         # Execute training
-        do_train(model, Train, lr, epochs, BATCH_SIZE, CROSS_VALIDATION, LOSS_FUNCTION, epochs_passed=epochs_passed)
+        do_train(
+            model,
+            Train,
+            lr,
+            epochs,
+            BATCH_SIZE,
+            CROSS_VALIDATION,
+            LOSS_FUNCTION,
+            epochs_passed=epochs_passed,
+            callbacks=[tensorboard_callback],
+        )
         epochs_passed += epochs
-
-    # for i in tqdm(range(10, 20)):
-    #     event = "event0000010%02d" % i
-    #     hits, cells, truth, particles = get_event(event)
-    #     hit_cells = cells.groupby(["hit_id"]).value.count().values
-    #     hit_value = cells.groupby(["hit_id"]).value.sum().values
-    #     features = np.hstack(
-    #         (
-    #             hits[["x", "y", "z"]] / 1000,
-    #             hit_cells.reshape(len(hit_cells), 1) / 10,
-    #             hit_value.reshape(len(hit_cells), 1),
-    #         )
-    #     )
-
-    #     size = 30000000
-    #     n = len(truth)
-    #     i = np.random.randint(n, size=size)
-    #     j = np.random.randint(n, size=size)
-    #     p_id = truth.particle_id.values
-    #     pair = np.hstack((i.reshape(size, 1), j.reshape(size, 1)))
-    #     pair = pair[((p_id[i] == 0) | (p_id[i] != p_id[j]))]
-
-    #     Train0 = np.hstack((features[pair[:, 0]], features[pair[:, 1]], np.zeros((len(pair), 1))))
-
-    #     pred = model.predict(Train0[:, :-1], batch_size=20000)
-    #     s = np.where(pred > 0.5)[0]
-
-    #     print(event, len(Train0), len(s))
-
-    #     if len(Train_hard) == 0:
-    #         Train_hard = Train0[s]
-    #     else:
-    #         Train_hard = np.vstack((Train_hard, Train0[s]))
-    # del Train0
-    # print(Train_hard.shape)
-
-    # model.compile(loss=[LOSS_FUNCTION], optimizer=Adam(learning_rate=10 ** (lr)), metrics=["accuracy"])
-    # History = model.fit(
-    #     x=Train[:, :-1],
-    #     y=Train[:, -1],
-    #     batch_size=BATCH_SIZE,
-    #     epochs=1,
-    #     verbose=2,
-    #     validation_split=CROSS_VALIDATION,
-    #     shuffle=True,
-    # )  # type: ignore
-
-    # lr = LR_1
-    # model.compile(loss=[LOSS_FUNCTION], optimizer=Adam(learning_rate=10 ** (lr)), metrics=["accuracy"])
-    # History = model.fit(
-    #     x=Train[:, :-1],
-    #     y=Train[:, -1],
-    #     batch_size=BATCH_SIZE,
-    #     epochs=20,
-    #     verbose=2,
-    #     validation_split=CROSS_VALIDATION,
-    #     shuffle=True,
-    # )  # type: ignore
-
-    # lr = LR_2
-    # model.compile(loss=[LOSS_FUNCTION], optimizer=Adam(learning_rate=10 ** (lr)), metrics=["accuracy"])
-    # History = model.fit(
-    #     x=Train[:, :-1],
-    #     y=Train[:, -1],
-    #     batch_size=BATCH_SIZE,
-    #     epochs=3,
-    #     verbose=2,
-    #     validation_split=CROSS_VALIDATION,
-    #     shuffle=True,
-    # )  # type: ignore
