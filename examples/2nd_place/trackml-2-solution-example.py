@@ -18,6 +18,7 @@ from tqdm import tqdm
 DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
 DATA_ROOT = DIRECTORY + "data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
+MODELS_ROOT = DIRECTORY + "trained_models/2nd_place/"
 prefix = DATA_SAMPLE
 
 
@@ -40,6 +41,8 @@ LOSS_FUNCTION = "binary_crossentropy"
 # Hard negative training
 LR_HARD = [-4, -5, -6]
 EPOCHS_HARD = 30, 10, 2
+
+TEST_THRESHOLD = 0.95
 
 
 def get_event(event):
@@ -192,40 +195,98 @@ def get_hard_negatives(Train, model, event_range=EVENT_RANGE):
     return Train_hard
 
 
-def get_predict(hit, truth, features, thr=0.5):
+def get_predict(features, truth, hit_id, thr=0.5, batch_size=None):
     Tx = np.zeros((len(truth), 10))
+    # Set first five columns of Tx to be the features of the hit with hit_id
+    Tx[:, :5] = np.tile(features[hit_id], (len(Tx), 1))
+    # Set last five columns of Tx to be the features of all hits
     Tx[:, 5:] = features
-    Tx[:, :5] = np.tile(features[hit], (len(Tx), 1))
-    pred = model.predict(Tx, batch_size=len(Tx))[:, 0]  # type: ignore
-    # TTA
+
+    # Make prediction
+    batch_size = batch_size or round(len(Tx) / 5)
+    pred = model.predict(Tx, batch_size=batch_size)[:, 0]  # type: ignore
+
+    # TTA (test time augmentation)
+    """ TTA takes a similar concept but applies it during the testing or inference phase. Instead of making predictions on the original test samples alone, TTA generates multiple augmented versions of the test samples by applying various transformations or augmentations. The model then makes predictions on each augmented version, and the final prediction is obtained by aggregating the predictions from all the augmented samples. Common aggregation techniques include taking the average or the maximum probability across the augmented predictions. """
+
+    # Take indices of prediction that have a prediction above the threshold
     idx = np.where(pred > thr)[0]
+
+    # Filter Tx on predictions above threshold and swap first and last five columns
+    # TODO: why is this done? Is this TTA?
     Tx2 = np.zeros((len(idx), 10))
     Tx2[:, 5:] = Tx[idx, :5]
     Tx2[:, :5] = Tx[idx, 5:]
-    pred1 = model.predict(Tx2, batch_size=len(idx))[:, 0]  # type: ignore
+
+    # Predict again with swapped columns
+    pred1 = model.predict(Tx2, batch_size=batch_size)[:, 0]  # type: ignore
+
+    # Take average of predictions and swapped predictions
     pred[idx] = (pred[idx] + pred1) / 2
+
     return pred
 
 
-def test():
-    # Load event
-    event = "event000001001"
-    hits, cells, truth, particles = get_event(event)
+def get_path(features, module_id, hit_id, truth, mask, thr):
+    """Predict set of hits that belong to the same track as hit_id"""
+    path = [hit_id]
+    a = 0
+    while True:
+        c = get_predict(features, truth, path[-1], thr / 2)
+        mask = (c > thr) * mask
+        mask[path[-1]] = 0
 
-    groups = hits.groupby(["volume_id", "layer_id", "module_id"])
+        if 1:
+            cand = np.where(c > thr)[0]
+            if len(cand) > 0:
+                mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
+
+        a = (c + a) * mask
+        if a.max() < thr * len(path):
+            break
+        path.append(a.argmax())
+    return path
+
+
+def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD):
+    """Test the model on a single event"""
+    # Load event
+    hits, cells, truth, particles = get_event(event_name)
+
+    # Group by volume_id, layer_id, module_id and count number of hits
     count = hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().values
+    # print(hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().head(20))
+
+    # Assign module_id with hit_id as index
     module_id = np.zeros(len(hits), dtype="int32")
 
+    # Loop over unique (volume_id, layer_id, module_id) tuples
+    # TODO no idea why this is done in such a convoluted way
     for i in range(len(count)):
+        # Take sum of counts of previous tuples
         si = np.sum(count[:i])
+        # Assign module_id to hit_ids
+        # module_id[hit_id] = module_id
         module_id[si : si + count[i]] = i
 
     # Define test input
     features = get_features(hits, cells)
 
+    # select one hit to construct a track
+    for hit_id in range(n_test):
+        path = get_path(features, module_id, hit_id, truth, np.ones(len(truth)), test_thr)
+        gt = np.where(truth.particle_id == truth.particle_id[hit_id])[0]
+        print("hit_id = ", hit_id + 1)
+        print("reconstruct :", path)
+        print("ground truth:", gt.tolist())
+
+
+def _datetime_str():
+    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
 
 def _get_log_dir():
-    return DIRECTORY + "training_logs/2nd_place_example/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return DIRECTORY + "training_logs/2nd_place_example/fit/" + _datetime_str()
 
 
 def _get_tensorboard_callback():
@@ -296,12 +357,16 @@ def run_training(
 
 if __name__ == "__main__":
     new_model = False
+    export = True
     print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
     print(tf.config.list_physical_devices("GPU"))
 
     if new_model:
         model = run_training()
+        if export:
+            model.save(MODELS_ROOT + f"/new_{_datetime_str()}.h5")
+
     else:
-        model = load_model(DIRECTORY + "/trained_models/2nd_place/model/my_model.h5")
+        model = load_model(MODELS_ROOT + "original_model/my_model.h5")
 
     test()
