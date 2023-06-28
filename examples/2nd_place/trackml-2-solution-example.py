@@ -196,6 +196,7 @@ def get_hard_negatives(Train, model, event_range=EVENT_RANGE):
 
 
 def get_predict(features, truth, hit_id, thr=0.5, batch_size=None):
+    # TODO why is len of truth taken and not hits? They should be equal
     Tx = np.zeros((len(truth), 10))
     # Set first five columns of Tx to be the features of the hit with hit_id
     Tx[:, :5] = np.tile(features[hit_id], (len(Tx), 1))
@@ -227,23 +228,34 @@ def get_predict(features, truth, hit_id, thr=0.5, batch_size=None):
     return pred
 
 
-def get_path(features, module_id, hit_id, truth, mask, thr):
+def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=True):
     """Predict set of hits that belong to the same track as hit_id"""
     path = [hit_id]
     a = 0
     while True:
-        c = get_predict(features, truth, path[-1], thr / 2)
-        mask = (c > thr) * mask
+        # Predict probability of each pair of hits with the last hit in the path
+        p = get_predict(features, truth, path[-1], thr / 2)
+        # Generate mask of hits that have a probability above the threshold
+        mask = (p > thr) * mask
+        # Mask last added hit
         mask[path[-1]] = 0
 
-        if 1:
-            cand = np.where(c > thr)[0]
+        if skip_same_module:
+            # Skip hits that are in the same module as any hit in the path, because the best hit is already found for this module
+            cand = np.where(p > thr)[0]  # indices of candidate hits
             if len(cand) > 0:
-                mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
+                cand_module_ids = module_id[cand]  # module ids of candidate hits
+                path_module_ids = module_id[path]  # module ids of hits in path
+                overlap = np.isin(cand_module_ids, path_module_ids)
+                # Mask out hits that are in the same module as any hit in the path
+                mask[cand[overlap]] = 0
 
-        a = (c + a) * mask
+        # `a` is the culuminative probability between each hit in the path
+        a = (p + a) * mask
+        # Breaking condition: if best average probability is below threshold, end path
         if a.max() < thr * len(path):
             break
+        # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
         path.append(a.argmax())
     return path
 
