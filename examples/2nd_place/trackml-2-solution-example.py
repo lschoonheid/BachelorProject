@@ -14,7 +14,6 @@ from tqdm import tqdm
 # print(os.listdir("../input/trackml/"))
 # prefix='../input/trackml-particle-identification/'
 
-# keras.tf.config.list_physical_devices("GPU")
 
 DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
 DATA_ROOT = DIRECTORY + "data/"
@@ -197,13 +196,13 @@ def get_predict(hit, truth, features, thr=0.5):
     Tx = np.zeros((len(truth), 10))
     Tx[:, 5:] = features
     Tx[:, :5] = np.tile(features[hit], (len(Tx), 1))
-    pred = model.predict(Tx, batch_size=len(Tx))[:, 0] # type: ignore
+    pred = model.predict(Tx, batch_size=len(Tx))[:, 0]  # type: ignore
     # TTA
     idx = np.where(pred > thr)[0]
     Tx2 = np.zeros((len(idx), 10))
     Tx2[:, 5:] = Tx[idx, :5]
     Tx2[:, :5] = Tx[idx, 5:]
-    pred1 = model.predict(Tx2, batch_size=len(idx))[:, 0] # type: ignore
+    pred1 = model.predict(Tx2, batch_size=len(idx))[:, 0]  # type: ignore
     pred[idx] = (pred[idx] + pred1) / 2
     return pred
 
@@ -213,6 +212,7 @@ def test():
     event = "event000001001"
     hits, cells, truth, particles = get_event(event)
 
+    groups = hits.groupby(["volume_id", "layer_id", "module_id"])
     count = hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().values
     module_id = np.zeros(len(hits), dtype="int32")
 
@@ -295,11 +295,13 @@ def run_training(
 
 
 if __name__ == "__main__":
-    new_model = True
+    new_model = False
+    print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
+    print(tf.config.list_physical_devices("GPU"))
 
     if new_model:
         model = run_training()
     else:
-        model = load_model("../input/trackml/my_model.h5")
+        model = load_model(DIRECTORY + "/trained_models/2nd_place/model/my_model.h5")
 
     test()
