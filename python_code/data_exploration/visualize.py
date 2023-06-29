@@ -223,7 +223,7 @@ def generate_track_fig(fig_x=FIG_X, fig_y=FIG_Y) -> tuple[Figure, Axes, Axes, Ax
     return fig, ax3d, axxy, axxz, axyz
 
 
-def add_track(
+def add_track_to_fig(
     track_points: DataFrame,
     ax3d: Axes | None = None,
     axxy: Axes | None = None,
@@ -253,7 +253,7 @@ def add_track(
         ax.plot(track_points_sorted.tx, track_points_sorted.ty, label=particle_id, marker=marker, markersize=markersize)  # type: ignore
 
 
-def plot_tracks(
+def plot_event_tracks(
     event_kv: dict[str, DataFrame], event_id: str | None = None, Nt: int | None = 10, random=False, **kwargs
 ):
     """Plot the tracks"""
@@ -282,7 +282,7 @@ def plot_tracks(
         track_points: DataFrame = truth.loc[truth.particle_id == particle_id]
 
         # Add track to plot
-        add_track(track_points, ax3d, axxy, axxz, axyz, particle_id=particle_id)
+        add_track_to_fig(track_points, ax3d, axxy, axxz, axyz, particle_id=particle_id)
 
     # Add legend if N is small enough
 
@@ -421,7 +421,7 @@ def visualize_event(
     do_table: bool = True,
     do_plot_hits: bool = True,
     do_plot_histogram: bool = True,
-    do_plot_tracks: bool = True,
+    do_plot_event_tracks: bool = True,
     do_versus_scatter: bool = True,
     **kwargs,
 ):
@@ -430,7 +430,7 @@ def visualize_event(
     if do_table:
         print_heads(event_kv)
 
-    if not any([do_plot_hits, do_plot_histogram, do_plot_tracks]):
+    if not any([do_plot_hits, do_plot_histogram, do_plot_event_tracks]):
         return
 
     if do_plot_hits:
@@ -440,8 +440,8 @@ def visualize_event(
     # if do_plot_histogram:
     #     plot_histograms(event_kv, **kwargs)
 
-    if do_plot_tracks:
-        plot_tracks(event_kv, **kwargs)
+    if do_plot_event_tracks:
+        plot_event_tracks(event_kv, **kwargs)
 
     if do_versus_scatter:
         do_cell_vs_tp(event_kv)

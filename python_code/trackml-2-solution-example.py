@@ -9,6 +9,7 @@ from tqdm import tqdm_notebook
 import datetime
 import tensorflow as tf
 from tqdm import tqdm
+from data_exploration.visualize import generate_track_fig, add_track_to_fig
 
 # print(os.listdir("../input"))
 # print(os.listdir("../input/trackml/"))
@@ -282,7 +283,7 @@ def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=Tru
     return path
 
 
-def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD):
+def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD, verbose=True):
     """Test the model on a single event"""
     # Load event
     hits, cells, truth, particles = get_event(event_name)
@@ -306,13 +307,29 @@ def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD):
     # Define test input
     features = get_features(hits, cells)
 
+    tracks = []
+
     # select one hit to construct a track
     for hit_id in range(n_test):
-        path = get_path(features, module_id, hit_id, truth, np.ones(len(truth)), test_thr)
-        gt = np.where(truth.particle_id == truth.particle_id[hit_id])[0]
-        print("hit_id = ", hit_id + 1)
-        print("reconstruct :", path)
-        print("ground truth:", gt.tolist())
+        t_reconstructed = get_path(features, module_id, hit_id, truth, np.ones(len(truth)), test_thr)
+        t_truth = np.where(truth.particle_id == truth.particle_id[hit_id])[0]
+
+        if verbose:
+            print("hit_id = ", hit_id + 1)
+            print("reconstruct :", t_reconstructed)
+            print("ground truth:", t_truth.tolist())
+
+        tracks.append(
+            [
+                {
+                    "seed_id": hit_id + 1,
+                    "truth": t_truth,
+                    "reconstructed": t_reconstructed,
+                }
+            ]
+        )
+
+    return tracks
 
 
 def _datetime_str():
@@ -403,4 +420,23 @@ if __name__ == "__main__":
     else:
         model = load_model(MODELS_ROOT + "original_model/my_model.h5")
 
-    test()
+    # Generate some tracks
+    generated_tracks = test(n_test=1)
+
+    # Show tracks
+    plot_targets = generate_track_fig()
+    fig = plot_targets[0]
+    axes = plot_targets[1:]
+
+    # TODO plot hits, too?
+    for track in generated_tracks:
+        add_track_to_fig(
+            track.reconstructed,
+            *axes,
+            particle_id=f"Seed {track.seed_id} reconstructed",
+        )
+        add_track_to_fig(
+            track.truth,
+            *axes,
+            particle_id=f"Seed {track.seed_id} truth",
+        )
