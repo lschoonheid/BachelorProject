@@ -251,7 +251,29 @@ def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=Tru
                 mask[cand[overlap]] = 0
 
         # `a` is the culuminative probability between each hit in the path
+        # At each step we look at the best candidate for the whole (previously geberate) track
         a = (p + a) * mask
+        # a += p
+        # a *= mask
+
+        # a[0] at step 3 = p01 + p02
+        # a[1] at step 3 = p01 + p12
+
+        # a[0] at step 4 = p01 + p02 + p03
+        # a[1] at step 4 = p01 + p12 + p13
+        # a[2] at step 4 = p02 + p12 + p23
+
+        # a[0] at step 5 = p01 + p02 + p03 + p04
+        # a[1] at step 5 = p01 + p12 + p13 + p14
+        # a[2] at step 5 = p02 + p12 + p23 + p24
+        # a[3] at step 5 = p03 + p13 + p23 + p34
+
+        # a[0] at step 6 = p01 + p02 + p03 + p04 + p05
+        # a[1] at step 6 = p01 + p12 + p13 + p14 + p15
+        # a[2] at step 6 = p02 + p12 + p23 + p24 + p25
+
+        # a[n] = sum(p(n belonging to path))
+
         # Breaking condition: if best average probability is below threshold, end path
         if a.max() < thr * len(path):
             break
