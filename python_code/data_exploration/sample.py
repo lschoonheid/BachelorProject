@@ -1,11 +1,10 @@
 import argparse
-
 import numpy as np
-from helpers import get_event_names, load_event_cached
 from random import choice as random_choice
 from pandas import DataFrame
-from visualize import *
-from _constants import DATA_SAMPLE
+from .visualize import *
+from .helpers import get_event_names, load_event_cached
+from .constants import DATA_SAMPLE
 
 
 def sample_event(

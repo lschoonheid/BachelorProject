@@ -7,8 +7,8 @@ from matplotlib import pyplot as plt
 from random import sample as random_sample
 from tqdm import tqdm
 
-from _constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX, PLOT_FONTSIZE, FIG_EXTENSION
-from helpers import get_event_names_str
+from .constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX, PLOT_FONTSIZE, FIG_EXTENSION
+from .helpers import get_event_names_str
 
 # TODO:
 # [x] Charge distribution
@@ -229,28 +229,44 @@ def add_track_to_fig(
     axxy: Axes | None = None,
     axxz: Axes | None = None,
     axyz: Axes | None = None,
+    type: str = "truth",
     particle_id: int | str = "particle",
 ):
+    assert type in ["truth", "hits"]
+
+    # Choose axis labels
+    if type == "truth":
+        x_str, y_str, z_str = "tx", "ty", "tz"
+    else:
+        x_str, y_str, z_str = (
+            "x",
+            "y",
+            "z",
+        )
+
     # Sort hits by distance to origin
-    track_points.insert(2, "r", track_points.apply(lambda x: (x.tx**2 + x.ty**2) ** 0.5, axis=1), True)
-    # Z-axis is timewise
-    track_points_sorted: DataFrame = track_points.sort_values(by=["tz", "r"])
+    track_points.insert(
+        2, "r", track_points.apply(lambda x: (x[x_str] ** 2 + x[y_str] ** 2 + x[z_str] ** 2) ** 0.5, axis=1), True
+    )
+    # Z-axis is timelike
+    track_points_sorted: DataFrame = track_points.sort_values(by=[z_str, "r"])
 
     # Plot track
     marker = "."
     markersize = 3
     if ax3d:
         ax3d.plot(
-            track_points_sorted.tx,
-            track_points_sorted.ty,
-            track_points_sorted.tz,
+            track_points_sorted[x_str],
+            track_points_sorted[y_str],
+            track_points_sorted[z_str],
             label=particle_id,
             marker=marker,
             markersize=markersize,
         )
 
-    for ax in filter(lambda x: x is not None, [axxy, axxz, axyz]):
-        ax.plot(track_points_sorted.tx, track_points_sorted.ty, label=particle_id, marker=marker, markersize=markersize)  # type: ignore
+    axxy.plot(track_points_sorted[x_str], track_points_sorted[y_str], label=particle_id, marker=marker, markersize=markersize)  # type: ignore
+    axxz.plot(track_points_sorted[x_str], track_points_sorted[z_str], label=particle_id, marker=marker, markersize=markersize)  # type: ignore
+    axyz.plot(track_points_sorted[y_str], track_points_sorted[z_str], label=particle_id, marker=marker, markersize=markersize)  # type: ignore
 
 
 def plot_event_tracks(

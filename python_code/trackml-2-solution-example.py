@@ -9,6 +9,7 @@ from tqdm import tqdm_notebook
 import datetime
 import tensorflow as tf
 from tqdm import tqdm
+
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 
 # print(os.listdir("../input"))
@@ -320,13 +321,11 @@ def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD, verbose
             print("ground truth:", t_truth.tolist())
 
         tracks.append(
-            [
-                {
-                    "seed_id": hit_id + 1,
-                    "truth": t_truth,
-                    "reconstructed": t_reconstructed,
-                }
-            ]
+            {
+                "seed_id": hit_id + 1,
+                "truth_ids": t_truth,
+                "reconstructed_ids": t_reconstructed,
+            }
         )
 
     return tracks
@@ -440,3 +439,5 @@ if __name__ == "__main__":
             *axes,
             particle_id=f"Seed {track.seed_id} truth",
         )
+
+    fig.savefig("generated_tracks.png", dpi=300)

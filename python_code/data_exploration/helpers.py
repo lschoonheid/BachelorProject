@@ -7,7 +7,7 @@ from typing import Callable
 from functools import wraps
 from pandas import DataFrame
 from trackml.dataset import load_event
-from _constants import CACHE_LOC
+from .constants import CACHE_LOC
 
 
 def get_event_names(dir: str) -> list[str]:
