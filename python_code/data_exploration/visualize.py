@@ -1,3 +1,5 @@
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 from pandas import CategoricalIndex, DataFrame, Index, Series
@@ -189,14 +191,10 @@ def plot_hits(event_kv: dict[str, DataFrame], unique: bool = False, **kwargs):
                     plt.close()
 
 
-def plot_tracks(
-    event_kv: dict[str, DataFrame], event_id: str | None = None, Nt: int | None = 10, random=False, **kwargs
-):
-    """Plot the tracks"""
-    # Note: only works with truth data so far
-
+def generate_track_fig(fig_x=FIG_X, fig_y=FIG_Y) -> tuple[Figure, Axes, Axes, Axes, Axes]:
+    """Get figure for plotting tracks"""
     # Create figure
-    fig = plt.figure(figsize=(2 * FIG_X, 2 * FIG_Y))
+    fig = plt.figure(figsize=(2 * fig_x, 2 * fig_y))
     ax3d = fig.add_subplot(2, 2, 1, projection="3d")
     axxy = fig.add_subplot(2, 2, 2)
     axxz = fig.add_subplot(2, 2, 3)
@@ -222,6 +220,47 @@ def plot_tracks(
     # Y,Z
     axyz.set_xlabel("y")
     axyz.set_ylabel("z")
+    return fig, ax3d, axxy, axxz, axyz
+
+
+def add_track(
+    track_points: DataFrame,
+    ax3d: Axes | None = None,
+    axxy: Axes | None = None,
+    axxz: Axes | None = None,
+    axyz: Axes | None = None,
+    particle_id: int | str = "particle",
+):
+    # Sort hits by distance to origin
+    track_points.insert(2, "r", track_points.apply(lambda x: (x.tx**2 + x.ty**2) ** 0.5, axis=1), True)
+    # Z-axis is timewise
+    track_points_sorted: DataFrame = track_points.sort_values(by=["tz", "r"])
+
+    # Plot track
+    marker = "."
+    markersize = 3
+    if ax3d:
+        ax3d.plot(
+            track_points_sorted.tx,
+            track_points_sorted.ty,
+            track_points_sorted.tz,
+            label=particle_id,
+            marker=marker,
+            markersize=markersize,
+        )
+
+    for ax in filter(lambda x: x is not None, [axxy, axxz, axyz]):
+        ax.plot(track_points_sorted.tx, track_points_sorted.ty, label=particle_id, marker=marker, markersize=markersize)  # type: ignore
+
+
+def plot_tracks(
+    event_kv: dict[str, DataFrame], event_id: str | None = None, Nt: int | None = 10, random=False, **kwargs
+):
+    """Plot the tracks"""
+    # Note: only works with truth data so far
+
+    # Create figure
+    fig, ax3d, axxy, axxz, axyz = generate_track_fig(FIG_X, FIG_Y)
 
     # Select a subset of the particles
     particle_ids = event_kv["particles"].particle_id.unique()
@@ -242,25 +281,8 @@ def plot_tracks(
         # Select all hits for this particular particle
         track_points: DataFrame = truth.loc[truth.particle_id == particle_id]
 
-        # Sort hits by distance to origin
-        track_points.insert(2, "r", track_points.apply(lambda x: (x.tx**2 + x.ty**2) ** 0.5, axis=1), True)
-        # Z-axis is timewise
-        track_points: DataFrame = track_points.sort_values(by=["tz", "r"])
-
-        # Plot track
-        marker = "."
-        markersize = 3
-        ax3d.plot(
-            track_points.tx,
-            track_points.ty,
-            track_points.tz,
-            label=particle_id,
-            marker=marker,
-            markersize=markersize,
-        )
-        axxy.plot(track_points.tx, track_points.ty, label=particle_id, marker=marker, markersize=markersize)
-        axxz.plot(track_points.tx, track_points.tz, label=particle_id, marker=marker, markersize=markersize)
-        axyz.plot(track_points.ty, track_points.tz, label=particle_id, marker=marker, markersize=markersize)
+        # Add track to plot
+        add_track(track_points, ax3d, axxy, axxz, axyz, particle_id=particle_id)
 
     # Add legend if N is small enough
 
