@@ -232,7 +232,9 @@ def get_predict(features, truth, hit_id, thr=0.5, batch_size=None):
 
 def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=True):
     """Predict set of hits that belong to the same track as hit_id"""
-    path = [hit_id]
+    # Convert to index
+    i_0 = hit_id - 1
+    path = [i_0]
     a = 0
     while True:
         # Predict probability of each pair of hits with the last hit in the path
@@ -281,7 +283,8 @@ def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=Tru
             break
         # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
         path.append(a.argmax())
-    return path
+    # Convert indices back to hit_ids by adding 1
+    return np.array(path) + 1
 
 
 def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD, verbose=True):
