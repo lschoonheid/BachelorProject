@@ -1,3 +1,4 @@
+import random
 import numpy as np
 import pandas as pd
 import os
@@ -287,7 +288,7 @@ def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=Tru
     return np.array(path) + 1
 
 
-def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD, verbose=True):
+def test(event_name="event000001001", seed_0=1, n_test=1, test_thr=TEST_THRESHOLD, verbose=True):
     """Test the model on a single event"""
     # Load event
     hits, cells, truth, particles = get_event(event_name)
@@ -314,22 +315,41 @@ def test(event_name="event000001001", n_test=3, test_thr=TEST_THRESHOLD, verbose
     tracks = []
 
     # select one hit to construct a track
-    for hit_id in range(n_test):
-        t_reconstructed = get_path(features, module_id, hit_id, truth, np.ones(len(truth)), test_thr)
-        t_truth = np.where(truth.particle_id == truth.particle_id[hit_id])[0]
+    for hit_id in range(seed_0, seed_0 + n_test):
+        # Predict corresponding hits that belong to the same track
+        reconstructed_ids = get_path(features, module_id, hit_id, truth, np.ones(len(truth)), test_thr)
 
-        if verbose:
-            print("hit_id = ", hit_id + 1)
-            print("reconstruct :", t_reconstructed)
-            print("ground truth:", t_truth.tolist())
+        # Select data corresponding to reconstructed track
+        hits_reconstructed = hits[hits.hit_id.isin(reconstructed_ids)]  # hits data of reconstructed track
+        truth_reconstructed = truth[truth.hit_id.isin(reconstructed_ids)]  # truth data of reconstructed track
+
+        # Select particle id of hit by index (hit_id - 1)
+        particle_id = truth.particle_id[hit_id - 1]
+
+        # Select data corresponding to true track
+        truth_truth = truth[truth.particle_id == particle_id]  # truth data of true track
+        truth_ids = truth_truth.hit_id.values
+        hits_truth = hits[hits.hit_id.isin(truth_ids)]  # hits data of true track
 
         tracks.append(
             {
-                "seed_id": hit_id + 1,
-                "truth_ids": t_truth,
-                "reconstructed_ids": t_reconstructed,
+                "seed_id": hit_id,
+                "seed_particle_id": particle_id,
+                "truth_ids": truth_ids,
+                "reconstructed_ids": reconstructed_ids,
+                "hits_truth": hits_truth,
+                "truth_truth": truth_truth,
+                "hits_reconstructed": hits_reconstructed,
+                "truth_reconstructed": truth_reconstructed,
             }
         )
+
+        if verbose:
+            print("hit_id = ", hit_id)
+            print("reconstruct :", reconstructed_ids)
+            print("ground truth:", truth_ids.tolist())
+            print(truth_truth)
+            print(truth_reconstructed)
 
     return tracks
 
@@ -411,6 +431,9 @@ def run_training(
 if __name__ == "__main__":
     new_model = False
     export = True
+    repeats = 20
+    n_test = 1
+    pick_random = False
     print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
     print(tf.config.list_physical_devices("GPU"))
 
@@ -422,25 +445,41 @@ if __name__ == "__main__":
     else:
         model = load_model(MODELS_ROOT + "original_model/my_model.h5")
 
-    # Generate some tracks
-    generated_tracks = test(n_test=1)
+    # Generate some tracks and compare with truth
+    for i in range(1, 1 + repeats):
+        # set seed
+        n_max = 10000  # TODO get length of hits table
+        seed = random.randrange(1, n_max) if pick_random else i
 
-    # Show tracks
-    plot_targets = generate_track_fig()
-    fig = plot_targets[0]
-    axes = plot_targets[1:]
+        # Generate some track(s)
+        generated_tracks = test(seed_0=seed, n_test=n_test)
 
-    # TODO plot hits, too?
-    for track in generated_tracks:
-        add_track_to_fig(
-            track.reconstructed,
-            *axes,
-            particle_id=f"Seed {track.seed_id} reconstructed",
-        )
-        add_track_to_fig(
-            track.truth,
-            *axes,
-            particle_id=f"Seed {track.seed_id} truth",
-        )
+        # Show tracks
+        plot_targets = generate_track_fig()
+        fig = plot_targets[0]
+        axes = plot_targets[1:]
 
-    fig.savefig("generated_tracks.png", dpi=300)
+        # TODO plot adjacent hits, too?
+        for track in generated_tracks:
+            add_track_to_fig(
+                track["truth_reconstructed"],
+                *axes,
+                particle_id=f"Seed {track['seed_id']} reconstructed",
+            )
+            add_track_to_fig(
+                track["truth_truth"],
+                *axes,
+                particle_id=f"Seed {track['seed_id']} truth",
+            )
+
+            # Plot seed hit
+            t_r = track["truth_reconstructed"]
+            s_x, s_y, s_z = t_r[t_r["hit_id"] == seed][["tx", "ty", "tz"]].values[0]
+            axes[0].plot([s_x], [s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+            axes[1].plot([s_x], [s_y], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+            axes[2].plot([s_x], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+            axes[3].plot([s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+
+        for ax in axes:
+            ax.legend()
+        fig.savefig(f"{n_test}_generated_tracks_seed_{seed}.png", dpi=300)
