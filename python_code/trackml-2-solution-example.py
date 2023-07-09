@@ -441,78 +441,39 @@ def test(event_name="event000001001", seed_0=1, n_test=1, test_thr=TEST_THRESHOL
     return tracks
 
 
-def _datetime_str():
-    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+def plot_prediction(truth, reconstructed, seed: int, tag: str | None = None):
+    # Show tracks
 
+    plot_targets = generate_track_fig()
+    fig = plot_targets[0]
+    axes = plot_targets[1:]
 
-def _get_log_dir():
-    return DIRECTORY + "training_logs/2nd_place_example/fit/" + _datetime_str()
+    # TODO plot adjacent hits, too?
 
+    add_track_to_fig(
+        truth,
+        *axes,
+        particle_id=f"Seed {seed} truth",
+    )
+    add_track_to_fig(
+        reconstructed,
+        *axes,
+        particle_id=f"Seed {seed} reconstructed",
+    )
 
-def _get_tensorboard_callback():
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=_get_log_dir(), histogram_freq=1)
-    return tensorboard_callback
+    # Plot seed hit
+    t_r = reconstructed
+    s_x, s_y, s_z = t_r[t_r["hit_id"] == seed][["tx", "ty", "tz"]].values[0]
+    axes[0].plot([s_x], [s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+    axes[1].plot([s_x], [s_y], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+    axes[2].plot([s_x], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+    axes[3].plot([s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
 
+    for ax in axes:
+        ax.legend()
 
-def run_training(
-    learning_rates=LEARNING_RATES,
-    epochs=EPOCHS,
-    learning_rates_hard=LR_HARD,
-    epochs_hard=EPOCHS_HARD,
-    batch_size=BATCH_SIZE,
-    validation_split=VALIDATION_SPLIT,
-):
-    # Prepare training set
-    Train = get_train()
-    # Init model
-    model = init_model()
-
-    epochs_passed = 0
-
-    # Train model
-
-    # Prerpare tensorboard
-    tensorboard_callback = _get_tensorboard_callback()
-
-    # Train regular
-    for lr, epochs in zip(learning_rates, epochs):
-        # Execute training
-        do_train(
-            model,
-            Train,
-            lr,
-            epochs,
-            batch_size,
-            validation_split,
-            LOSS_FUNCTION,
-            epochs_passed=epochs_passed,
-            callbacks=[tensorboard_callback],
-        )
-        epochs_passed += epochs
-
-    # Add hard negatives to training set
-    Train_hard = get_hard_negatives(Train, model)
-    Train = np.vstack((Train, Train_hard))
-    np.random.shuffle(Train)
-    print(Train.shape)
-
-    # Train hard
-    for lr, epochs in zip(learning_rates_hard, epochs_hard):
-        # Execute training
-        do_train(
-            model,
-            Train,
-            lr,
-            epochs,
-            batch_size,
-            validation_split,
-            LOSS_FUNCTION,
-            epochs_passed=epochs_passed,
-            callbacks=[tensorboard_callback],
-        )
-        epochs_passed += epochs
-
-    return model
+    tag = "" if tag is None else f"_{tag}"
+    fig.savefig(f"{n_test}_generated_tracks_seed_{seed}{tag}.png", dpi=300)
 
 
 if __name__ == "__main__":
@@ -521,6 +482,7 @@ if __name__ == "__main__":
     repeats = 20
     n_test = 1
     pick_random = False
+    animate = True
     print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
     print(tf.config.list_physical_devices("GPU"))
 
@@ -536,37 +498,26 @@ if __name__ == "__main__":
     for i in range(1, 1 + repeats):
         # set seed
         n_max = 10000  # TODO get length of hits table
-        seed = random.randrange(1, n_max) if pick_random else i
+        # seed = random.randrange(1, n_max) if pick_random else i
+        seed = 9606
 
         # Generate some track(s)
         generated_tracks = test(seed_0=seed, n_test=n_test)
 
-        # Show tracks
-        plot_targets = generate_track_fig()
-        fig = plot_targets[0]
-        axes = plot_targets[1:]
-
-        # TODO plot adjacent hits, too?
         for track in generated_tracks:
-            add_track_to_fig(
-                track["truth_reconstructed"],
-                *axes,
-                particle_id=f"Seed {track['seed_id']} reconstructed",
-            )
-            add_track_to_fig(
-                track["truth_truth"],
-                *axes,
-                particle_id=f"Seed {track['seed_id']} truth",
-            )
+            # Get truth and reconstructed hits
+            truth: pd.DataFrame = track["truth_truth"]
+            reconstructed: pd.DataFrame = track["truth_reconstructed"]
 
-            # Plot seed hit
-            t_r = track["truth_reconstructed"]
-            s_x, s_y, s_z = t_r[t_r["hit_id"] == seed][["tx", "ty", "tz"]].values[0]
-            axes[0].plot([s_x], [s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
-            axes[1].plot([s_x], [s_y], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
-            axes[2].plot([s_x], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
-            axes[3].plot([s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
+            # Plot track
+            if animate:
+                # Order by the order in which the hits were added to the track.
+                reconstruction_order_index = track["reconstructed_ids"] - 1
+                reconstructed = reconstructed.reindex(reconstruction_order_index)
 
-        for ax in axes:
-            ax.legend()
-        fig.savefig(f"{n_test}_generated_tracks_seed_{seed}.png", dpi=300)
+                # Divide the track into frames
+                frames_total = len(reconstructed)
+                for f in range(frames_total):
+                    plot_prediction(truth, reconstructed[: f + 1], seed, tag=f"f{f+1}:{frames_total}")
+            else:
+                plot_prediction(truth, reconstructed, seed)

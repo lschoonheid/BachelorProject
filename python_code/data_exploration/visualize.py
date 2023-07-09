@@ -245,11 +245,12 @@ def add_track_to_fig(
         )
 
     # Sort hits by distance to origin
-    track_points.insert(
-        2, "r", track_points.apply(lambda x: (x[x_str] ** 2 + x[y_str] ** 2 + x[z_str] ** 2) ** 0.5, axis=1), True
+    track_points_copy = track_points.copy(deep=True)
+    track_points_copy.insert(
+        2, "r", track_points_copy.apply(lambda x: (x[x_str] ** 2 + x[y_str] ** 2 + x[z_str] ** 2) ** 0.5, axis=1), True
     )
     # Z-axis is timelike
-    track_points_sorted: DataFrame = track_points.sort_values(by=[z_str, "r"])
+    track_points_sorted: DataFrame = track_points_copy.sort_values(by=[z_str, "r"])
 
     # Plot track
     marker = "."
