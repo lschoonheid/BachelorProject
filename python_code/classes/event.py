@@ -1,11 +1,13 @@
 from functools import cached_property
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
+from numpy import ndarray
 from pandas import DataFrame, Index
-from helpers import load_event_cached
 from trackml.dataset import load_event
+from data_exploration.helpers import load_event_cached
+from data_exploration.constants import DETECTOR_KEYS
 
-from python_code.constants import DETECTOR_KEYS
+# from python_code.constants import DETECTOR_KEYS  # type: ignore
 
 
 class Event:
@@ -23,6 +25,7 @@ class Event:
         dir: str | None = None,
         event_name: str | None = None,
         prefix: str | None = None,
+        feature_generator: Callable[..., ndarray] | None = None,
         _cached=True,
     ):
         self.hits: DataFrame
@@ -36,8 +39,12 @@ class Event:
         prefix = dir + str(event_name) if dir and event_name else prefix
         assert prefix, "Either dir and event_name or prefix must be specified"
         # Load event
-        self.all: tuple[DataFrame, ...] = load_event_cached(prefix) if _cached else load_event(prefix)
+        self.all: tuple[DataFrame, DataFrame, DataFrame, DataFrame] = (
+            load_event_cached(prefix) if _cached else load_event(prefix)
+        )
         self.hits, self.cells, self.particles, self.truth = self.all
+
+        self.feature_generator = feature_generator
 
     def link(self):
         """Link the tables together"""
@@ -79,3 +86,9 @@ class Event:
     def __str__(self):
         """Return a string representation of the event"""
         return f"Event {self.event_name}"
+
+    @cached_property
+    def features(self):
+        """Return the features of the event"""
+        assert self.feature_generator, "No feature generator specified"
+        return self.feature_generator(self)

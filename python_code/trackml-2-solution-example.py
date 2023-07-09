@@ -12,6 +12,8 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
+from classes.event import Event
+from data_exploration.helpers import pickle_cache
 
 # print(os.listdir("../input"))
 # print(os.listdir("../input/trackml/"))
@@ -48,12 +50,13 @@ EPOCHS_HARD = 30, 10, 2
 TEST_THRESHOLD = 0.95
 
 
-def get_event(event):
+def get_event(event_name: str):
+    """Get event data."""
     # zf = zipfile.ZipFile(DATA_SAMPLE)
-    hits = pd.read_csv(f"{DATA_SAMPLE}{event}-hits.csv")
-    cells = pd.read_csv((f"{DATA_SAMPLE}{event}-cells.csv"))
-    truth = pd.read_csv((f"{DATA_SAMPLE}{event}-truth.csv"))
-    particles = pd.read_csv((f"{DATA_SAMPLE}{event}-particles.csv"))
+    hits = pd.read_csv(f"{DATA_SAMPLE}{event_name}-hits.csv")
+    cells = pd.read_csv((f"{DATA_SAMPLE}{event_name}-cells.csv"))
+    truth = pd.read_csv((f"{DATA_SAMPLE}{event_name}-truth.csv"))
+    particles = pd.read_csv((f"{DATA_SAMPLE}{event_name}-particles.csv"))
     return hits, cells, truth, particles
 
 
@@ -63,7 +66,7 @@ def get_particle_ids(truth):
     return particle_ids
 
 
-def get_features(hits, cells):
+def get_features(event: Event):
     """Extract the following features per hit:
     - x, y, z: coordinates in 3D space
     - TODO volume_id, layer_id, module_id: detector ID
@@ -73,18 +76,26 @@ def get_features(hits, cells):
 
     """
     # Take #cells hit per hit_id
-    hit_cells = cells.groupby(["hit_id"]).value.count().values
+    hit_cells = event.cells.groupby(["hit_id"]).value.count().values
     # Take cell value sum per hit_id
-    hit_value = cells.groupby(["hit_id"]).value.sum().values
+    hit_value = event.cells.groupby(["hit_id"]).value.sum().values
     # hstack hit features per hit_id
     features = np.hstack(
         (
-            hits[["x", "y", "z"]] / 1000,
+            event.hits[["x", "y", "z"]] / 1000,
             hit_cells.reshape(len(hit_cells), 1) / 10,  # type: ignore
             hit_value.reshape(len(hit_cells), 1),  # type: ignore
         )
     )
     return features
+
+
+@pickle_cache
+def get_featured_event(event_name: str):
+    event = Event(DATA_SAMPLE, event_name, feature_generator=get_features)
+    # Call features, so that they are cached
+    f_cache = event.features
+    return event
 
 
 def get_train_0(size, n, truth, features):
@@ -102,8 +113,10 @@ def get_train(event_range=EVENT_RANGE, features=None):
     Train = []
     for i in tqdm(event_range):
         event_name = "event0000010%02d" % i
-        hits, cells, truth, particles = get_event(event_name)
-        features = get_features(hits, cells)
+        event = get_featured_event(event_name)
+        hits, truth = event.hits, event.truth
+        features = event.features
+
         particle_ids = get_particle_ids(truth)
 
         # Take all pairs of hits that belong to the same track id (cartesian product)
@@ -175,9 +188,10 @@ def get_hard_negatives(Train, model, event_range=EVENT_RANGE):
     Train_hard = []
     for i in tqdm(event_range):
         # Load event
-        event = "event0000010%02d" % i
-        hits, cells, truth, particles = get_event(event)
-        features = get_features(hits, cells)
+        event_name = "event0000010%02d" % i
+        event = get_featured_event(event_name)
+        hits, cells, particles, truth = event.all
+        features = event.features
 
         # Take all pairs of hits that do not belong to the same track id
         size = 30000000
@@ -196,6 +210,80 @@ def get_hard_negatives(Train, model, event_range=EVENT_RANGE):
     del Train0  # type: ignore
     print(Train_hard.shape)  # type: ignore
     return Train_hard
+
+
+def _datetime_str():
+    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _get_log_dir():
+    return DIRECTORY + "training_logs/2nd_place_example/fit/" + _datetime_str()
+
+
+def _get_tensorboard_callback():
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=_get_log_dir(), histogram_freq=1)
+    return tensorboard_callback
+
+
+def run_training(
+    learning_rates=LEARNING_RATES,
+    epochs=EPOCHS,
+    learning_rates_hard=LR_HARD,
+    epochs_hard=EPOCHS_HARD,
+    batch_size=BATCH_SIZE,
+    validation_split=VALIDATION_SPLIT,
+):
+    # Prepare training set
+    Train = get_train()
+    # Init model
+    model = init_model()
+
+    epochs_passed = 0
+
+    # Train model
+
+    # Prerpare tensorboard
+    tensorboard_callback = _get_tensorboard_callback()
+
+    # Train regular
+    for lr, epochs in zip(learning_rates, epochs):
+        # Execute training
+        do_train(
+            model,
+            Train,
+            lr,
+            epochs,
+            batch_size,
+            validation_split,
+            LOSS_FUNCTION,
+            epochs_passed=epochs_passed,
+            callbacks=[tensorboard_callback],
+        )
+        epochs_passed += epochs
+
+    # Add hard negatives to training set
+    Train_hard = get_hard_negatives(Train, model)
+    Train = np.vstack((Train, Train_hard))
+    np.random.shuffle(Train)
+    print(Train.shape)
+
+    # Train hard
+    for lr, epochs in zip(learning_rates_hard, epochs_hard):
+        # Execute training
+        do_train(
+            model,
+            Train,
+            lr,
+            epochs,
+            batch_size,
+            validation_split,
+            LOSS_FUNCTION,
+            epochs_passed=epochs_passed,
+            callbacks=[tensorboard_callback],
+        )
+        epochs_passed += epochs
+
+    return model
 
 
 def get_predict(features, truth, hit_id, thr=0.5, batch_size=None):
@@ -291,7 +379,9 @@ def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=Tru
 def test(event_name="event000001001", seed_0=1, n_test=1, test_thr=TEST_THRESHOLD, verbose=True):
     """Test the model on a single event"""
     # Load event
-    hits, cells, truth, particles = get_event(event_name)
+    event = get_featured_event(event_name)
+    hits, cells, particles, truth = event.all
+    features = event.features
 
     # Group by volume_id, layer_id, module_id and count number of hits
     count = hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().values
@@ -308,9 +398,6 @@ def test(event_name="event000001001", seed_0=1, n_test=1, test_thr=TEST_THRESHOL
         # Assign module_id to hit_ids
         # module_id[hit_id] = module_id
         module_id[si : si + count[i]] = i
-
-    # Define test input
-    features = get_features(hits, cells)
 
     tracks = []
 
