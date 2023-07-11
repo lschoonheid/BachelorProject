@@ -1,4 +1,5 @@
 import random
+from matplotlib.axes import Axes
 import numpy as np
 import pandas as pd
 import os
@@ -10,6 +11,7 @@ from tqdm import tqdm_notebook
 import datetime
 import tensorflow as tf
 from tqdm import tqdm
+from typing import Any
 
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 from classes.event import Event
@@ -32,25 +34,23 @@ N_EVENTS = 10
 EVENT_OFFSET = 10
 EVENT_RANGE = range(EVENT_OFFSET, EVENT_OFFSET + N_EVENTS)
 
-# Learning rates
-LR_0, LR_1, LR_2 = -5, -4, -5
-LEARNING_RATES = [10 ** (lr) for lr in [LR_0, LR_1, LR_2]]
-BATCH_SIZE = 8000
-
 # First training
 VALIDATION_SPLIT = 0.05
-E_0, E_1, E_2 = 1, 20, 3
-EPOCHS = [E_0, E_1, E_2]
+BATCH_SIZE = 8000
 LOSS_FUNCTION = "binary_crossentropy"
 
+# Learning rates
+LEARNING_RATES: list[float] = [-5, -4, -5]
+EPOCHS = [1, 20, 3]
+
 # Hard negative training
-LR_HARD = [-4, -5, -6]
-EPOCHS_HARD = 30, 10, 2
+LR_HARD: list[float] = [-4, -5, -6]
+EPOCHS_HARD = [30, 10, 2]
 
 TEST_THRESHOLD = 0.95
 
 
-def get_event(event_name: str):
+def get_event(event_name: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Get event data."""
     # zf = zipfile.ZipFile(DATA_SAMPLE)
     hits = pd.read_csv(f"{DATA_SAMPLE}{event_name}-hits.csv")
@@ -60,13 +60,13 @@ def get_event(event_name: str):
     return hits, cells, truth, particles
 
 
-def get_particle_ids(truth):
+def get_particle_ids(truth: pd.DataFrame) -> np.ndarray:
     particle_ids = truth.particle_id.unique()
     particle_ids = particle_ids[np.where(particle_ids != 0)[0]]
     return particle_ids
 
 
-def get_features(event: Event):
+def get_features(event: Event) -> np.ndarray:
     """Extract the following features per hit:
     - x, y, z: coordinates in 3D space
     - TODO volume_id, layer_id, module_id: detector ID
@@ -91,14 +91,14 @@ def get_features(event: Event):
 
 
 @pickle_cache
-def get_featured_event(event_name: str):
+def get_featured_event(event_name: str) -> Event:
     event = Event(DATA_SAMPLE, event_name, feature_generator=get_features)
     # Call features, so that they are cached
     f_cache = event.features
     return event
 
 
-def get_train_0(size, n, truth, features):
+def get_train_0(size: int, n: int, truth: pd.DataFrame, features: np.ndarray) -> np.ndarray:
     i = np.random.randint(n, size=size)
     j = np.random.randint(n, size=size)
     p_id = truth.particle_id.values
@@ -109,8 +109,8 @@ def get_train_0(size, n, truth, features):
     return Train0
 
 
-def get_train(event_range=EVENT_RANGE, features=None):
-    Train = []
+def get_train(event_range: range = EVENT_RANGE) -> np.ndarray:
+    Train = np.array([])
     for i in tqdm(event_range):
         event_name = "event0000010%02d" % i
         event = get_featured_event(event_name)
@@ -157,7 +157,7 @@ def get_train(event_range=EVENT_RANGE, features=None):
     return Train
 
 
-def init_model(fs=10):
+def init_model(fs: int = 10) -> Model:
     model = Sequential()
     model.add(Dense(800, activation="selu", input_shape=(fs,)))
     model.add(Dense(400, activation="selu"))
@@ -168,7 +168,17 @@ def init_model(fs=10):
     return model
 
 
-def do_train(model, Train, lr, epochs, batch_size, validation_split, loss_function, callbacks=[], epochs_passed=0):
+def do_train(
+    model: Model,
+    Train: np.ndarray,
+    lr: float,
+    epochs: int,
+    batch_size: int,
+    validation_split: float,
+    loss_function: str,
+    callbacks: list[Any] = [],
+    epochs_passed: int = 0,
+):
     model.compile(loss=[loss_function], optimizer=Adam(learning_rate=10 ** (lr)), metrics=["accuracy"])
     History = model.fit(
         x=Train[:, :-1],  # type: ignore
@@ -226,11 +236,11 @@ def _get_tensorboard_callback():
 
 
 def run_training(
-    learning_rates=LEARNING_RATES,
-    epochs=EPOCHS,
-    learning_rates_hard=LR_HARD,
-    epochs_hard=EPOCHS_HARD,
-    batch_size=BATCH_SIZE,
+    learning_rates: list[float] = LEARNING_RATES,
+    epochs: list[int] = EPOCHS,
+    learning_rates_hard: list[float] = LR_HARD,
+    epochs_hard: list[int] = EPOCHS_HARD,
+    batch_size: int = BATCH_SIZE,
     validation_split=VALIDATION_SPLIT,
 ):
     # Prepare training set
@@ -246,20 +256,20 @@ def run_training(
     tensorboard_callback = _get_tensorboard_callback()
 
     # Train regular
-    for lr, epochs in zip(learning_rates, epochs):
+    for lr, n_epoch in zip(learning_rates, epochs):
         # Execute training
         do_train(
             model,
             Train,
             lr,
-            epochs,
+            n_epoch,
             batch_size,
             validation_split,
             LOSS_FUNCTION,
             epochs_passed=epochs_passed,
             callbacks=[tensorboard_callback],
         )
-        epochs_passed += epochs
+        epochs_passed += n_epoch
 
     # Add hard negatives to training set
     Train_hard = get_hard_negatives(Train, model)
@@ -268,20 +278,20 @@ def run_training(
     print(Train.shape)
 
     # Train hard
-    for lr, epochs in zip(learning_rates_hard, epochs_hard):
+    for lr, n_epoch in zip(learning_rates_hard, epochs_hard):
         # Execute training
         do_train(
             model,
             Train,
             lr,
-            epochs,
+            n_epoch,
             batch_size,
             validation_split,
             LOSS_FUNCTION,
             epochs_passed=epochs_passed,
             callbacks=[tensorboard_callback],
         )
-        epochs_passed += epochs
+        epochs_passed += n_epoch
 
     return model
 
@@ -399,7 +409,7 @@ def get_path(
         if a.max() < thr * len(path):
             break
         # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
-        path.append(a.argmax())
+        path.append(a.argmax())  # type: ignore
     # Convert indices back to hit_ids by adding 1
     return np.array(path) + 1
 
@@ -464,7 +474,14 @@ def test(
     # select one hit to construct a track
     for hit_id in range(seed_0, seed_0 + n_test):
         # Predict corresponding hits that belong to the same track
-        reconstructed_ids = get_path(features, module_id, hit_id, truth, np.ones(len(truth)), test_thr)
+        reconstructed_ids = get_path(
+            hit_id,
+            thr=test_thr,
+            mask=np.ones(len(truth)),
+            module_id=module_id,
+            features=features,
+            truth=truth,
+        )
 
         # Select data corresponding to reconstructed track
         hits_reconstructed = hits[hits.hit_id.isin(reconstructed_ids)]  # hits data of reconstructed track
@@ -506,7 +523,7 @@ def plot_prediction(truth, reconstructed, seed: int, tag: str | None = None):
 
     plot_targets = generate_track_fig()
     fig = plot_targets[0]
-    axes = plot_targets[1:]
+    axes: tuple[Axes, Axes, Axes, Axes] = plot_targets[1:]
 
     # TODO plot adjacent hits, too?
 
