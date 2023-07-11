@@ -1,13 +1,9 @@
-import random
 from matplotlib.axes import Axes
 import numpy as np
 import pandas as pd
-import os
-import keras
 from keras.models import Model, Sequential, load_model
-from keras.layers import Dense, Input
+from keras.layers import Dense
 from keras.optimizers import Adam
-from tqdm import tqdm_notebook
 import datetime
 import tensorflow as tf
 from tqdm import tqdm
@@ -358,7 +354,6 @@ def get_path(
     a = 0
     while True:
         # Predict probability of each pair of hits with the last hit in the path
-
         if preds is not None:
             p = retrieve_predict(path[-1], preds)
         else:
@@ -414,30 +409,53 @@ def get_path(
     return np.array(path) + 1
 
 
-def get_all_paths(module_id, preds):
-    tracks_all = []
-    thr = 0.85
-    x4 = True
-    # TODO: shift hit_id for index
-    for hit_id in tqdm_notebook(range(len(preds))):
-        mask = np.ones(len(truth))
-        path = get_path(hit_id, thr, mask, module_id, preds=preds)
-        if x4 and len(path) > 1:
+def redraw(path: np.ndarray, hit_id: int, thr: float, mask:np.ndarray, module_id: np.ndarray, preds: np.ndarray):
+    # Try redrawing path with one hit removed
+    if len(path) > 1:
+        # Remove first added hit from path and re-predict
+        mask[path[1]] = 0
+        # Redraw
+        path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+
+        # Check for improvement
+        if len(path2) > len(path):
+            path = path2
+            # Remove first added hit from path and re-predict
             mask[path[1]] = 0
+            # Redraw
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+
+            # Check for improvement
             if len(path) < len(path2):
                 path = path2
-                mask[path[1]] = 0
-                path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
-                if len(path) < len(path2):
-                    path = path2
-            elif len(path2) > 1:
-                mask[path[1]] = 1
-                mask[path2[1]] = 0
-                path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
-                if len(path) < len(path2):
-                    path = path2
+
+        # No imrpovement yet. Try redrawing path with second hit of redrawn path removed
+        elif len(path2) > 1:
+            # Add first hit of redrawn path back to mask
+            mask[path[1]] = 1
+            # Remove second hit of redrawn path from mask
+            mask[path2[1]] = 0
+            # Redraw
+            path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+
+            if len(path) < len(path2):
+                path = path2
+    return path
+
+
+# thr = 0.85
+def get_all_paths(thr: float, module_id: np.ndarray, preds: np.ndarray, do_redraw: bool = True) -> list[np.ndarray]:
+    """Generate all paths for all hits in the event as seeds."""
+    tracks_all = []
+    for i_0 in tqdm(range(len(preds))):
+        hit_id = i_0 + 1
+        mask = np.ones(len(truth))
+        path = get_path(hit_id, thr, mask, module_id, preds=preds)
+
+        if do_redraw:
+            path = redraw(path, hit_id, thr, mask, module_id, preds)
         tracks_all.append(path)
+    return tracks_all
 
 
 def test(
@@ -523,7 +541,7 @@ def plot_prediction(truth, reconstructed, seed: int, tag: str | None = None):
 
     plot_targets = generate_track_fig()
     fig = plot_targets[0]
-    axes: tuple[Axes, Axes, Axes, Axes] = plot_targets[1:]
+    axes: tuple[Axes, Axes, Axes, Axes] = plot_targets[1:]  # type: ignore
 
     # TODO plot adjacent hits, too?
 
