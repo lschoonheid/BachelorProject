@@ -286,7 +286,8 @@ def run_training(
     return model
 
 
-def get_predict(features, truth, hit_id, thr=0.5, batch_size=None):
+def make_predict(features: np.ndarray, truth: np.ndarray, hit_id: int, thr=0.5, batch_size: int | None = None):
+    """Predict probability of each pair of hits with the last hit in the path. Generates a prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id."""
     # TODO why is len of truth taken and not hits? They should be equal
     Tx = np.zeros((len(truth), 10))
     # Set first five columns of Tx to be the features of the hit with hit_id
@@ -319,15 +320,42 @@ def get_predict(features, truth, hit_id, thr=0.5, batch_size=None):
     return pred
 
 
-def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=True):
+def retrieve_predict(hit_id: int, preds: np.ndarray):
+    """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id, by taking the prediction from the prediction matrix."""
+    c = np.zeros(len(preds))
+    c[preds[hit_id, 0]] = preds[hit_id, 1]
+    return c
+
+
+def get_path(
+    hit_id: int,
+    thr: float,
+    mask: np.ndarray,
+    module_id: np.ndarray,
+    skip_same_module: bool = True,
+    preds: np.ndarray | None = None,
+    features: np.ndarray | None = None,
+    truth: np.ndarray | None = None,
+):
     """Predict set of hits that belong to the same track as hit_id"""
+    # Verify correct input
+    if preds is None:
+        assert features is not None and truth is not None, "Either preds or features and truth must be provided"
+
     # Convert to index
     i_0 = hit_id - 1
     path = [i_0]
     a = 0
     while True:
         # Predict probability of each pair of hits with the last hit in the path
-        p = get_predict(features, truth, path[-1], thr / 2)
+
+        if preds is not None:
+            p = retrieve_predict(path[-1], preds)
+        else:
+            if features is None or truth is None:
+                raise ValueError("Either preds or features and truth must be provided")
+            p = make_predict(features, truth, path[-1], thr / 2)
+
         # Generate mask of hits that have a probability above the threshold
         mask = (p > thr) * mask
         # Mask last added hit
@@ -376,7 +404,39 @@ def get_path(features, module_id, hit_id, truth, mask, thr, skip_same_module=Tru
     return np.array(path) + 1
 
 
-def test(event_name="event000001001", seed_0=1, n_test=1, test_thr=TEST_THRESHOLD, verbose=True):
+def get_all_paths(module_id, preds):
+    tracks_all = []
+    thr = 0.85
+    x4 = True
+    # TODO: shift hit_id for index
+    for hit_id in tqdm_notebook(range(len(preds))):
+        mask = np.ones(len(truth))
+        path = get_path(hit_id, thr, mask, module_id, preds=preds)
+        if x4 and len(path) > 1:
+            mask[path[1]] = 0
+            path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+            if len(path) < len(path2):
+                path = path2
+                mask[path[1]] = 0
+                path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+                if len(path) < len(path2):
+                    path = path2
+            elif len(path2) > 1:
+                mask[path[1]] = 1
+                mask[path2[1]] = 0
+                path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+                if len(path) < len(path2):
+                    path = path2
+        tracks_all.append(path)
+
+
+def test(
+    event_name: str = "event000001001",
+    seed_0: int = 1,
+    n_test: int = 1,
+    test_thr: float = TEST_THRESHOLD,
+    verbose: bool = True,
+):
     """Test the model on a single event"""
     # Load event
     event = get_featured_event(event_name)
