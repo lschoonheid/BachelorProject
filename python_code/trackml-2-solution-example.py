@@ -191,7 +191,8 @@ def do_train(
     return History
 
 
-def get_hard_negatives(Train, model, event_range=EVENT_RANGE):
+def get_hard_negatives(model: Model, event_range: range = EVENT_RANGE):
+    """Get hard negative feature set for training."""
     Train_hard = []
     for i in tqdm(event_range):
         # Load event
@@ -233,6 +234,7 @@ def _get_tensorboard_callback():
 
 
 def run_training(
+    event_range: range = EVENT_RANGE,
     learning_rates: list[float] = LEARNING_RATES,
     epochs: list[int] = EPOCHS,
     learning_rates_hard: list[float] = LR_HARD,
@@ -240,8 +242,9 @@ def run_training(
     batch_size: int = BATCH_SIZE,
     validation_split=VALIDATION_SPLIT,
 ) -> Model:
+    """Get trained model."""
     # Prepare training set
-    Train = get_train()
+    Train = get_train(event_range)
     # Init model
     model = init_model()
 
@@ -269,7 +272,7 @@ def run_training(
         epochs_passed += n_epoch
 
     # Add hard negatives to training set
-    Train_hard = get_hard_negatives(Train, model)
+    Train_hard = get_hard_negatives(model, event_range)
     Train = np.vstack((Train, Train_hard))
     np.random.shuffle(Train)
     print(Train.shape)
@@ -330,7 +333,51 @@ def make_predict(
     return pred
 
 
-def retrieve_predict(hit_id: int, preds: np.ndarray) -> np.ndarray:
+# TODO: add comments
+def make_predict_matrix(
+    model: Model,
+    features: np.ndarray,
+) -> list[np.ndarray]:
+    TestX = np.zeros((len(features), 10))
+    TestX[:, 5:] = features
+
+    # for TTA
+    TestX1 = np.zeros((len(features), 10))
+    TestX1[:, :5] = features
+
+    preds = []
+
+    for index in tqdm(range(len(features) - 1)):
+        TestX[index + 1 :, :5] = np.tile(features[index], (len(TestX) - index - 1, 1))
+
+        pred = model.predict(TestX[index + 1 :], batch_size=20000)[:, 0]
+        idx = np.where(pred > 0.2)[0]
+
+        if len(idx) > 0:
+            TestX1[idx + index + 1, 5:] = TestX[idx + index + 1, :5]
+            pred1 = model.predict(TestX1[idx + index + 1], batch_size=20000)[:, 0]
+            pred[idx] = (pred[idx] + pred1) / 2
+
+        idx = np.where(pred > 0.5)[0]
+
+        preds.append([idx + index + 1, pred[idx]])
+
+        # if i==0: print(preds[-1])
+
+    preds.append([np.array([], dtype="int64"), np.array([], dtype="float32")])
+
+    # rebuild to NxN
+    for index in range(len(preds)):
+        ii = len(preds) - index - 1
+        for j in range(len(preds[ii][0])):
+            jj = preds[ii][0][j]
+            preds[jj][0] = np.insert(preds[jj][0], 0, ii)
+            preds[jj][1] = np.insert(preds[jj][1], 0, preds[ii][1][j])
+
+    return preds
+
+
+def retrieve_predict(hit_id: int, preds: list[np.ndarray]) -> np.ndarray:
     """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id, by taking the prediction from the prediction matrix."""
     c = np.zeros(len(preds))
     # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
@@ -339,6 +386,7 @@ def retrieve_predict(hit_id: int, preds: np.ndarray) -> np.ndarray:
 
 
 def get_module_id(hits: pd.DataFrame) -> np.ndarray:
+    """Generate list of module_id for each hit with hit index as index."""
     # Group by volume_id, layer_id, module_id and count number of hits
     count = hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().values
 
@@ -360,7 +408,7 @@ def get_module_id(hits: pd.DataFrame) -> np.ndarray:
 def mask_same_module(
     mask: np.ndarray, path: np.ndarray | list[int], p: np.ndarray, thr: float, module_id: np.ndarray
 ) -> np.ndarray:
-    # Skip hits that are in the same module as any hit in the path, because the best hit is already found for this module
+    """Skip hits that are in the same module as any hit in the path, because the best hit is already found for this module."""
     cand = np.where(p > thr)[0]  # indices of candidate hits
     if len(cand) > 0:
         cand_module_ids = module_id[cand]  # module ids of candidate hits
@@ -377,7 +425,7 @@ def get_path(
     mask: np.ndarray,
     module_id: np.ndarray,
     skip_same_module: bool = True,
-    preds: np.ndarray | None = None,
+    preds: list[np.ndarray] | None = None,
     features: np.ndarray | None = None,
     hits: pd.DataFrame | None = None,
 ):
@@ -442,7 +490,8 @@ def get_path(
     return np.array(path) + 1
 
 
-def redraw(path: np.ndarray, hit_id: int, thr: float, mask: np.ndarray, module_id: np.ndarray, preds: np.ndarray):
+def redraw(path: np.ndarray, hit_id: int, thr: float, mask: np.ndarray, module_id: np.ndarray, preds: list[np.ndarray]):
+    """Try redrawing path with one hit removed for improved confidence."""
     # Try redrawing path with one hit removed
     if len(path) > 1:
         # Remove first added hit from path and re-predict
@@ -477,11 +526,11 @@ def redraw(path: np.ndarray, hit_id: int, thr: float, mask: np.ndarray, module_i
 
 
 def get_all_paths(
-    hits: pd.DataFrame, thr: float, module_id: np.ndarray, preds: np.ndarray, do_redraw: bool = True
+    hits: pd.DataFrame, thr: float, module_id: np.ndarray, preds: list[np.ndarray], do_redraw: bool = True
 ) -> list[np.ndarray]:
-    """Generate all paths for all hits in the event as seeds."""
+    """Generate all paths for all hits in the event as seeds. Returns list of hit_ids per seed."""
     tracks_all = []
-    for index in tqdm(range(len(preds))):
+    for index in tqdm(range(len(preds)), desc="Generating all paths"):
         # Shift hit_id -> index + 1 because hit_id starts at 1 and index starts at 0
         hit_id = index + 1
         mask = np.ones(len(hits))
@@ -493,56 +542,73 @@ def get_all_paths(
     return tracks_all
 
 
-# def get_track_score(tracks_all, n=4):
-#     scores = np.zeros(len(tracks_all))
-#     for i, path in enumerate(tracks_all):
-#         count = len(path)
+def get_track_scores(tracks_all: list[np.ndarray], factor: int = 8) -> np.ndarray:
+    """Generate confidence score for each track."""
+    scores = np.zeros(len(tracks_all))
+    for path_index, path in enumerate(tracks_all):
+        n_hits = len(path)
 
-#         if count > 1:
-#             tp = 0
-#             fp = 0
-#             for p in path:
-#                 tp = tp + np.sum(np.isin(tracks_all[p], path, assume_unique=True))
-#                 fp = fp + np.sum(np.isin(tracks_all[p], path, assume_unique=True, invert=True))
-#             scores[i] = (tp - fp * n - count) / count / (count - 1)
-#         else:
-#             scores[i] = -np.inf
-#     return scores
+        # Skip paths with only one hit
+        if n_hits > 1:
+            tp = 0  # number of estimated true positives
+            fp = 0  # number of estimated false positives
+            for hit_id in path:
+                # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+                hit_index = hit_id - 1
+                seed_referenced_path = tracks_all[hit_index]
+                tp = tp + np.sum(np.isin(seed_referenced_path, path, assume_unique=True))
+                fp = fp + np.sum(np.isin(seed_referenced_path, path, assume_unique=True, invert=True))
 
-
-# def score_event_fast(truth, submission):
-#     truth = truth[["hit_id", "particle_id", "weight"]].merge(submission, how="left", on="hit_id")
-#     df = truth.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
-#     truth = truth.merge(df, how="left", on=["track_id", "particle_id"])
-
-#     df1 = df.groupby(["particle_id"]).count_both.sum().to_frame("count_particle").reset_index()
-#     truth = truth.merge(df1, how="left", on="particle_id")
-#     df1 = df.groupby(["track_id"]).count_both.sum().to_frame("count_track").reset_index()
-#     truth = truth.merge(df1, how="left", on="track_id")
-#     truth.count_both *= 2
-#     score = truth[(truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)].weight.sum()
-#     particles = truth[
-#         (truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)
-#     ].particle_id.unique()
-
-#     return score, truth[truth.particle_id.isin(particles)].weight.sum(), 1 - truth[truth.track_id > 0].weight.sum()
+            # Calculate track score
+            # TODO: understand this metric
+            # tp = estimated true positives
+            # fp = estimated false positives
+            # (balance) factor = 8 (why?)
+            # n_hits = number of hits in path
+            scores[path_index] = (tp - fp * factor - n_hits) / n_hits / (n_hits - 1)
+        else:
+            # Useless path, set score to -inf
+            scores[path_index] = -np.inf
+    return scores
 
 
-# def evaluate_tracks(tracks, truth):
-#     submission = pd.DataFrame({"hit_id": truth.hit_id, "track_id": tracks})
-#     score = score_event_fast(truth, submission)[0]
-#     track_id = tracks.max()
-#     print(
-#         "%.4f %2.2f %4d %5d %.4f %.4f"
-#         % (
-#             score,
-#             np.sum(tracks > 0) / track_id,
-#             track_id,
-#             np.sum(tracks == 0),
-#             1 - score - np.sum(truth.weight.values[tracks == 0]),
-#             np.sum(truth.weight.values[tracks == 0]),
-#         )
-#     )
+# TODO: add comments
+def score_event_fast(submission, truth: pd.DataFrame):
+    """Calculate score for a single event based on `truth` information."""
+    truth = truth[["hit_id", "particle_id", "weight"]].merge(submission, how="left", on="hit_id")
+    df = truth.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
+    truth = truth.merge(df, how="left", on=["track_id", "particle_id"])
+
+    df1 = df.groupby(["particle_id"]).count_both.sum().to_frame("count_particle").reset_index()
+    truth = truth.merge(df1, how="left", on="particle_id")
+    df1 = df.groupby(["track_id"]).count_both.sum().to_frame("count_track").reset_index()
+    truth = truth.merge(df1, how="left", on="track_id")
+    truth.count_both *= 2
+    score = truth[(truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)].weight.sum()
+    particles = truth[
+        (truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)
+    ].particle_id.unique()
+
+    return score, truth[truth.particle_id.isin(particles)].weight.sum(), 1 - truth[truth.track_id > 0].weight.sum()
+
+
+# TODO: add comments
+def evaluate_tracks(tracks: np.ndarray, truth: pd.DataFrame):
+    """Evaluate tracks by comparing them to the ground truth."""
+    submission = pd.DataFrame({"hit_id": truth.hit_id, "track_id": tracks})
+    score = score_event_fast(truth, submission)[0]
+    track_id = tracks.max()
+    print(
+        "%.4f %2.2f %4d %5d %.4f %.4f"
+        % (
+            score,
+            np.sum(tracks > 0) / track_id,
+            track_id,
+            np.sum(tracks == 0),
+            1 - score - np.sum(truth.weight.values[tracks == 0]),
+            np.sum(truth.weight.values[tracks == 0]),
+        )
+    )
 
 
 def extend_path(
@@ -550,11 +616,14 @@ def extend_path(
     thr: float,
     mask: np.ndarray,
     module_id: np.ndarray,
-    preds: np.ndarray,
+    preds: list[np.ndarray],
     skip_same_module=True,
     last=False,
 ):
-    a = 0
+    """Extend path by adding hits with a probability above the threshold."""
+    a = 0  # Cumulative probability
+
+    # Generate sum of prediction probabilities for all hits in path except the last
     for hit_id in path[:-1]:
         p = retrieve_predict(hit_id, preds)
         if last == False:
@@ -568,6 +637,7 @@ def extend_path(
 
         a = (p + a) * mask
 
+    # Add hits until no hits with a probability above the threshold are found
     while True:
         p = retrieve_predict(path[-1], preds)
 
@@ -575,6 +645,7 @@ def extend_path(
             mask = (p > thr) * mask
 
         # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+        # Occlude last added hit
         mask[path[-1] - 1] = 0
 
         if skip_same_module:
@@ -592,8 +663,103 @@ def extend_path(
     return path
 
 
+def _get_path(hit_index, tracks_all, merged_tracks) -> np.ndarray:
+    path = np.array(tracks_all[hit_index])
+    path = path[np.where(merged_tracks[path] == 0)[0]]
+    return path
+
+
+def merge_tracks(
+    scores: np.ndarray,
+    thr: int,
+    merged_tracks=None,
+    do_extend=False,
+    thr_extend_0: int | None = None,
+    thr_extend_1: float | None = None,
+    module_id=None,
+    preds=None,
+):
+    if do_extend and (thr_extend_0 is None or thr_extend_1 is None or module_id is None or preds is None):
+        raise ValueError("thr_extend, module_id, preds must be provided if do_extend is True")
+
+    idx = np.argsort(scores)[::-1]
+
+    if merged_tracks is None:
+        merged_tracks = np.zeros(len(hits))
+
+    track_id = 0
+
+    for hit_index in idx:
+        path = _get_path(hit_index, tracks_all, merged_tracks)
+
+        if do_extend and len(path) > thr_extend_0:  # type: ignore
+            path = extend_path(path, thr=thr_extend_1, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)  # type: ignore
+
+        if len(path) > thr:
+            track_id = track_id + 1
+            merged_tracks[path] = track_id
+
+    return merged_tracks
+
+
+def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False):
+    for track_id in range(1, int(merged_tracks.max()) + 1):
+        path = np.where(merged_tracks == track_id)[0]
+
+        if check_modulus and len(path) % 2 != 0:
+            continue
+
+        path = extend_path(path=path, thr=thr, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)
+        merged_tracks[path] = track_id
+    return merged_tracks
+
+
+# TODO: add comments
+def run_merging(
+    scores: np.ndarray,
+    preds: list[np.ndarray],
+    multi_stage=True,
+    log_evaluations=True,
+    truth: pd.DataFrame | None = None,
+):
+    # merge tracks by confidence and get score
+    if log_evaluations and truth is None:
+        raise ValueError("`truth` must be provided if `log_evaluations` is True")
+
+    merged_tracks = merge_tracks(scores, 3)
+    evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
+
+    if not multi_stage:
+        return merged_tracks
+
+    # multistage
+    merged_tracks = merge_tracks(scores, 6)
+    evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
+
+    merged_tracks = extend_tracks(merged_tracks, 0.6, module_id, preds)
+    evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
+
+    merged_tracks = merge_tracks(
+        scores, thr=3, merged_tracks=merged_tracks, do_extend=True, thr_extend_0=3, thr_extend_1=0.6
+    )
+    evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
+
+    merged_tracks = extend_tracks(merged_tracks, 0.5, module_id, preds)
+    evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
+
+    merged_tracks = merge_tracks(
+        scores, thr=2, merged_tracks=merged_tracks, do_extend=True, thr_extend_0=1, thr_extend_1=0.5
+    )
+    evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
+
+    merged_tracks = extend_tracks(merged_tracks, 0.5, module_id, preds, check_modulus=True)
+    evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
+
+    return merged_tracks
+
+
 def test(
-    event_name: str = "event000001001",
+    event: Event,
     seed_0: int = 1,
     n_test: int = 1,
     test_thr: float = TEST_THRESHOLD,
@@ -602,9 +768,11 @@ def test(
 ):
     """Test the model on a single event"""
     # Load event
-    event = get_featured_event(event_name)
     hits, cells, particles, truth = event.all
     features = event.features
+
+    if module_id is None:
+        module_id = get_module_id(hits)
 
     tracks = []
 
@@ -690,7 +858,14 @@ def plot_prediction(truth, reconstructed, seed: int, tag: str | None = None):
     fig.savefig(f"{n_test}_generated_tracks_seed_{seed}{tag}.png", dpi=300)
 
 
-def show_test(repeats: int = 1, n_test: int = 1, pick_random: bool = True, animate: bool = False):
+def show_test(
+    event: Event,
+    module_id,
+    repeats: int = 1,
+    n_test: int = 1,
+    pick_random: bool = True,
+    animate: bool = False,
+):
     # Generate some tracks and compare with truth
     for i in range(1, 1 + repeats):
         # set seed
@@ -698,7 +873,7 @@ def show_test(repeats: int = 1, n_test: int = 1, pick_random: bool = True, anima
         seed = random.randrange(1, n_max) if pick_random else i
 
         # Generate some track(s)
-        generated_tracks = test(seed_0=seed, n_test=n_test)
+        generated_tracks = test(event, module_id=module_id, seed_0=seed, n_test=n_test)
 
         for track in generated_tracks:
             # Get truth and reconstructed hits
@@ -722,19 +897,50 @@ def show_test(repeats: int = 1, n_test: int = 1, pick_random: bool = True, anima
 if __name__ == "__main__":
     new_model = False
     export = True
+    do_test: bool = False
     repeats = 20
     n_test = 1
     pick_random = False
-    animate = True
+    animate = False
     print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
     print(tf.config.list_physical_devices("GPU"))
 
+    # Get model
     if new_model:
         model = run_training()
         if export:
             model.save(MODELS_ROOT + f"/new_{_datetime_str()}.h5")
-
     else:
         model = load_model(MODELS_ROOT + "original_model/my_model.h5")
 
-    show_test(repeats, n_test, pick_random, animate)
+    # Load event and extract required data for prediction
+    event_name: str = "event000001001"
+    event = get_featured_event(event_name)
+    hits = event.hits
+    module_id = get_module_id(hits)
+
+    if do_test:
+        # Test model, output some visualized tracks
+        show_test(event, module_id, repeats, n_test, pick_random, animate)
+
+    # Generate tracks for each hit as seed
+    thr: float = 0.85
+    preds = make_predict_matrix(model, event.features)
+    tracks_all = get_all_paths(hits, thr, module_id, preds, do_redraw=True)
+
+    # Save tracks
+    time_tracks_done = _datetime_str()
+    pd.DataFrame(tracks_all).to_csv(f"tracks_all_{event_name}_{time_tracks_done}.csv")
+    print(f"Tracks saved as tracks_all_{event_name}_{time_tracks_done}.csv")
+
+    # calculate track's confidence
+    scores = get_track_scores(tracks_all)
+
+    # Merge tracks
+    merged_tracks = run_merging(scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth)
+
+    # Save submission
+    submission = pd.DataFrame({"hit_id": hits.hit_id, "track_id": merged_tracks})
+    time_done = _datetime_str()
+    submission.to_csv(f"submission_{event_name}_{time_done}.csv", index=False)
+    print(f"Submission saved as submission_{event_name}_{time_done}.csv")
