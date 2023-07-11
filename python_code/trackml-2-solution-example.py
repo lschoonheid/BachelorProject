@@ -219,11 +219,11 @@ def get_hard_negatives(Train, model, event_range=EVENT_RANGE):
     return Train_hard
 
 
-def _datetime_str():
+def _datetime_str() -> str:
     return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
-def _get_log_dir():
+def _get_log_dir() -> str:
     return DIRECTORY + "training_logs/2nd_place_example/fit/" + _datetime_str()
 
 
@@ -239,7 +239,7 @@ def run_training(
     epochs_hard: list[int] = EPOCHS_HARD,
     batch_size: int = BATCH_SIZE,
     validation_split=VALIDATION_SPLIT,
-):
+) -> Model:
     # Prepare training set
     Train = get_train()
     # Init model
@@ -293,12 +293,15 @@ def run_training(
     return model
 
 
-def make_predict(features: np.ndarray, hits: pd.DataFrame, hit_id: int, thr=0.5, batch_size: int | None = None):
+def make_predict(
+    features: np.ndarray, hits: pd.DataFrame, hit_id: int, thr=0.5, batch_size: int | None = None
+) -> np.ndarray:
     """Predict probability of each pair of hits with the last hit in the path. Generates a prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id."""
     # TODO why is len of truth taken and not hits? They should be equal
     Tx = np.zeros((len(hits), 10))
     # Set first five columns of Tx to be the features of the hit with hit_id
-    Tx[:, :5] = np.tile(features[hit_id], (len(Tx), 1))
+    # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+    Tx[:, :5] = np.tile(features[hit_id - 1], (len(Tx), 1))
     # Set last five columns of Tx to be the features of all hits
     Tx[:, 5:] = features
 
@@ -327,11 +330,45 @@ def make_predict(features: np.ndarray, hits: pd.DataFrame, hit_id: int, thr=0.5,
     return pred
 
 
-def retrieve_predict(hit_id: int, preds: np.ndarray):
+def retrieve_predict(hit_id: int, preds: np.ndarray) -> np.ndarray:
     """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id, by taking the prediction from the prediction matrix."""
     c = np.zeros(len(preds))
-    c[preds[hit_id, 0]] = preds[hit_id, 1]
+    # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+    c[preds[hit_id - 1, 0]] = preds[hit_id - 1, 1]
     return c
+
+
+def get_module_id(hits: pd.DataFrame) -> np.ndarray:
+    # Group by volume_id, layer_id, module_id and count number of hits
+    count = hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().values
+
+    # Assign module_id with hit_id as index
+    module_id = np.zeros(len(hits), dtype="int32")
+
+    # Loop over unique (volume_id, layer_id, module_id) tuples
+    # TODO no idea why this is done in such a convoluted way
+    for i in range(len(count)):
+        # Take sum of counts of previous tuples
+        si = np.sum(count[:i])
+        # Assign module_id to hit_ids
+        # module_id[hit_id] = module_id
+        module_id[si : si + count[i]] = i
+
+    return module_id
+
+
+def mask_same_module(
+    mask: np.ndarray, path: np.ndarray | list[int], p: np.ndarray, thr: float, module_id: np.ndarray
+) -> np.ndarray:
+    # Skip hits that are in the same module as any hit in the path, because the best hit is already found for this module
+    cand = np.where(p > thr)[0]  # indices of candidate hits
+    if len(cand) > 0:
+        cand_module_ids = module_id[cand]  # module ids of candidate hits
+        path_module_ids = module_id[path]  # module ids of hits in path
+        overlap = np.isin(cand_module_ids, path_module_ids)
+        # Mask out hits that are in the same module as any hit in the path
+        mask[cand[overlap]] = 0
+    return mask
 
 
 def get_path(
@@ -344,7 +381,9 @@ def get_path(
     features: np.ndarray | None = None,
     hits: pd.DataFrame | None = None,
 ):
-    """Predict set of hits that belong to the same track as hit_id"""
+    """Predict set of hits that belong to the same track as hit_id.
+    Returns list[hit_id].
+    """
     # Verify correct input
     if preds is None:
         assert features is not None and hits is not None, "Either preds or features and truth must be provided"
@@ -356,11 +395,11 @@ def get_path(
     while True:
         # Predict probability of each pair of hits with the last hit in the path
         if preds is not None:
-            p = retrieve_predict(path[-1], preds)
+            p = retrieve_predict(path[-1] + 1, preds)
         else:
             if features is None or hits is None:
                 raise ValueError("Either preds or features and truth must be provided")
-            p = make_predict(features, hits, path[-1], thr / 2)
+            p = make_predict(features, hits, path[-1] + 1, thr / 2)
 
         # Generate mask of hits that have a probability above the threshold
         mask = (p > thr) * mask
@@ -368,14 +407,7 @@ def get_path(
         mask[path[-1]] = 0
 
         if skip_same_module:
-            # Skip hits that are in the same module as any hit in the path, because the best hit is already found for this module
-            cand = np.where(p > thr)[0]  # indices of candidate hits
-            if len(cand) > 0:
-                cand_module_ids = module_id[cand]  # module ids of candidate hits
-                path_module_ids = module_id[path]  # module ids of hits in path
-                overlap = np.isin(cand_module_ids, path_module_ids)
-                # Mask out hits that are in the same module as any hit in the path
-                mask[cand[overlap]] = 0
+            mask = mask_same_module(mask, path, p, thr, module_id)
 
         # `a` is the culuminative probability between each hit in the path
         # At each step we look at the best candidate for the whole (previously geberate) track
@@ -427,7 +459,7 @@ def redraw(path: np.ndarray, hit_id: int, thr: float, mask: np.ndarray, module_i
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
             # Check for improvement
-            if len(path) < len(path2):
+            if len(path2) > len(path):
                 path = path2
 
         # No imrpovement yet. Try redrawing path with second hit of redrawn path removed
@@ -444,14 +476,14 @@ def redraw(path: np.ndarray, hit_id: int, thr: float, mask: np.ndarray, module_i
     return path
 
 
-# thr = 0.85
 def get_all_paths(
     hits: pd.DataFrame, thr: float, module_id: np.ndarray, preds: np.ndarray, do_redraw: bool = True
 ) -> list[np.ndarray]:
     """Generate all paths for all hits in the event as seeds."""
     tracks_all = []
-    for i_0 in tqdm(range(len(preds))):
-        hit_id = i_0 + 1
+    for index in tqdm(range(len(preds))):
+        # Shift hit_id -> index + 1 because hit_id starts at 1 and index starts at 0
+        hit_id = index + 1
         mask = np.ones(len(hits))
         path = get_path(hit_id, thr, mask, module_id, preds=preds)
 
@@ -513,34 +545,51 @@ def get_all_paths(
 #     )
 
 
-# def extend_path(path, mask, thr, last=False):
-#     a = 0
-#     for p in path[:-1]:
-#         c = get_predict2(p)
-#         if last == False:
-#             mask = (c > thr) * mask
-#         mask[p] = 0
-#         cand = np.where(c > thr)[0]
-#         mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
-#         a = (c + a) * mask
+def extend_path(
+    path: np.ndarray,
+    thr: float,
+    mask: np.ndarray,
+    module_id: np.ndarray,
+    preds: np.ndarray,
+    skip_same_module=True,
+    last=False,
+):
+    a = 0
+    for hit_id in path[:-1]:
+        p = retrieve_predict(hit_id, preds)
+        if last == False:
+            mask = (p > thr) * mask
+        # Occlude current hit
+        # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+        mask[hit_id - 1] = 0
 
-#     while True:
-#         c = get_predict2(path[-1])
-#         if last == False:
-#             mask = (c > thr) * mask
-#         mask[path[-1]] = 0
-#         cand = np.where(c > thr)[0]
-#         mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
-#         a = (c + a) * mask
+        if skip_same_module:
+            mask = mask_same_module(mask, path, p, thr, module_id)
 
-#         if a.max() < thr * len(path):
-#             break
+        a = (p + a) * mask
 
-#         path.append(a.argmax())
-#         if last:
-#             break
+    while True:
+        p = retrieve_predict(path[-1], preds)
 
-#     return path
+        if last == False:
+            mask = (p > thr) * mask
+
+        # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+        mask[path[-1] - 1] = 0
+
+        if skip_same_module:
+            mask = mask_same_module(mask, path, p, thr, module_id)
+
+        a = (p + a) * mask
+
+        if a.max() < thr * len(path):
+            break
+
+        path = np.append(path, a.argmax())
+        if last:
+            break
+
+    return path
 
 
 def test(
@@ -548,6 +597,7 @@ def test(
     seed_0: int = 1,
     n_test: int = 1,
     test_thr: float = TEST_THRESHOLD,
+    module_id: np.ndarray | None = None,
     verbose: bool = True,
 ):
     """Test the model on a single event"""
@@ -555,22 +605,6 @@ def test(
     event = get_featured_event(event_name)
     hits, cells, particles, truth = event.all
     features = event.features
-
-    # Group by volume_id, layer_id, module_id and count number of hits
-    count = hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().values
-    # print(hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().head(20))
-
-    # Assign module_id with hit_id as index
-    module_id = np.zeros(len(hits), dtype="int32")
-
-    # Loop over unique (volume_id, layer_id, module_id) tuples
-    # TODO no idea why this is done in such a convoluted way
-    for i in range(len(count)):
-        # Take sum of counts of previous tuples
-        si = np.sum(count[:i])
-        # Assign module_id to hit_ids
-        # module_id[hit_id] = module_id
-        module_id[si : si + count[i]] = i
 
     tracks = []
 
