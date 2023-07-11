@@ -461,6 +461,88 @@ def get_all_paths(
     return tracks_all
 
 
+# def get_track_score(tracks_all, n=4):
+#     scores = np.zeros(len(tracks_all))
+#     for i, path in enumerate(tracks_all):
+#         count = len(path)
+
+#         if count > 1:
+#             tp = 0
+#             fp = 0
+#             for p in path:
+#                 tp = tp + np.sum(np.isin(tracks_all[p], path, assume_unique=True))
+#                 fp = fp + np.sum(np.isin(tracks_all[p], path, assume_unique=True, invert=True))
+#             scores[i] = (tp - fp * n - count) / count / (count - 1)
+#         else:
+#             scores[i] = -np.inf
+#     return scores
+
+
+# def score_event_fast(truth, submission):
+#     truth = truth[["hit_id", "particle_id", "weight"]].merge(submission, how="left", on="hit_id")
+#     df = truth.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
+#     truth = truth.merge(df, how="left", on=["track_id", "particle_id"])
+
+#     df1 = df.groupby(["particle_id"]).count_both.sum().to_frame("count_particle").reset_index()
+#     truth = truth.merge(df1, how="left", on="particle_id")
+#     df1 = df.groupby(["track_id"]).count_both.sum().to_frame("count_track").reset_index()
+#     truth = truth.merge(df1, how="left", on="track_id")
+#     truth.count_both *= 2
+#     score = truth[(truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)].weight.sum()
+#     particles = truth[
+#         (truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)
+#     ].particle_id.unique()
+
+#     return score, truth[truth.particle_id.isin(particles)].weight.sum(), 1 - truth[truth.track_id > 0].weight.sum()
+
+
+# def evaluate_tracks(tracks, truth):
+#     submission = pd.DataFrame({"hit_id": truth.hit_id, "track_id": tracks})
+#     score = score_event_fast(truth, submission)[0]
+#     track_id = tracks.max()
+#     print(
+#         "%.4f %2.2f %4d %5d %.4f %.4f"
+#         % (
+#             score,
+#             np.sum(tracks > 0) / track_id,
+#             track_id,
+#             np.sum(tracks == 0),
+#             1 - score - np.sum(truth.weight.values[tracks == 0]),
+#             np.sum(truth.weight.values[tracks == 0]),
+#         )
+#     )
+
+
+# def extend_path(path, mask, thr, last=False):
+#     a = 0
+#     for p in path[:-1]:
+#         c = get_predict2(p)
+#         if last == False:
+#             mask = (c > thr) * mask
+#         mask[p] = 0
+#         cand = np.where(c > thr)[0]
+#         mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
+#         a = (c + a) * mask
+
+#     while True:
+#         c = get_predict2(path[-1])
+#         if last == False:
+#             mask = (c > thr) * mask
+#         mask[path[-1]] = 0
+#         cand = np.where(c > thr)[0]
+#         mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
+#         a = (c + a) * mask
+
+#         if a.max() < thr * len(path):
+#             break
+
+#         path.append(a.argmax())
+#         if last:
+#             break
+
+#     return path
+
+
 def test(
     event_name: str = "event000001001",
     seed_0: int = 1,
