@@ -1,3 +1,4 @@
+import random
 from matplotlib.axes import Axes
 import numpy as np
 import pandas as pd
@@ -292,10 +293,10 @@ def run_training(
     return model
 
 
-def make_predict(features: np.ndarray, truth: np.ndarray, hit_id: int, thr=0.5, batch_size: int | None = None):
+def make_predict(features: np.ndarray, hits: pd.DataFrame, hit_id: int, thr=0.5, batch_size: int | None = None):
     """Predict probability of each pair of hits with the last hit in the path. Generates a prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id."""
     # TODO why is len of truth taken and not hits? They should be equal
-    Tx = np.zeros((len(truth), 10))
+    Tx = np.zeros((len(hits), 10))
     # Set first five columns of Tx to be the features of the hit with hit_id
     Tx[:, :5] = np.tile(features[hit_id], (len(Tx), 1))
     # Set last five columns of Tx to be the features of all hits
@@ -341,12 +342,12 @@ def get_path(
     skip_same_module: bool = True,
     preds: np.ndarray | None = None,
     features: np.ndarray | None = None,
-    truth: np.ndarray | None = None,
+    hits: pd.DataFrame | None = None,
 ):
     """Predict set of hits that belong to the same track as hit_id"""
     # Verify correct input
     if preds is None:
-        assert features is not None and truth is not None, "Either preds or features and truth must be provided"
+        assert features is not None and hits is not None, "Either preds or features and truth must be provided"
 
     # Convert to index
     i_0 = hit_id - 1
@@ -357,9 +358,9 @@ def get_path(
         if preds is not None:
             p = retrieve_predict(path[-1], preds)
         else:
-            if features is None or truth is None:
+            if features is None or hits is None:
                 raise ValueError("Either preds or features and truth must be provided")
-            p = make_predict(features, truth, path[-1], thr / 2)
+            p = make_predict(features, hits, path[-1], thr / 2)
 
         # Generate mask of hits that have a probability above the threshold
         mask = (p > thr) * mask
@@ -409,7 +410,7 @@ def get_path(
     return np.array(path) + 1
 
 
-def redraw(path: np.ndarray, hit_id: int, thr: float, mask:np.ndarray, module_id: np.ndarray, preds: np.ndarray):
+def redraw(path: np.ndarray, hit_id: int, thr: float, mask: np.ndarray, module_id: np.ndarray, preds: np.ndarray):
     # Try redrawing path with one hit removed
     if len(path) > 1:
         # Remove first added hit from path and re-predict
@@ -444,12 +445,14 @@ def redraw(path: np.ndarray, hit_id: int, thr: float, mask:np.ndarray, module_id
 
 
 # thr = 0.85
-def get_all_paths(thr: float, module_id: np.ndarray, preds: np.ndarray, do_redraw: bool = True) -> list[np.ndarray]:
+def get_all_paths(
+    hits: pd.DataFrame, thr: float, module_id: np.ndarray, preds: np.ndarray, do_redraw: bool = True
+) -> list[np.ndarray]:
     """Generate all paths for all hits in the event as seeds."""
     tracks_all = []
     for i_0 in tqdm(range(len(preds))):
         hit_id = i_0 + 1
-        mask = np.ones(len(truth))
+        mask = np.ones(len(hits))
         path = get_path(hit_id, thr, mask, module_id, preds=preds)
 
         if do_redraw:
@@ -495,10 +498,10 @@ def test(
         reconstructed_ids = get_path(
             hit_id,
             thr=test_thr,
-            mask=np.ones(len(truth)),
+            mask=np.ones(len(hits)),
             module_id=module_id,
             features=features,
-            truth=truth,
+            hits=hits,
         )
 
         # Select data corresponding to reconstructed track
@@ -571,30 +574,12 @@ def plot_prediction(truth, reconstructed, seed: int, tag: str | None = None):
     fig.savefig(f"{n_test}_generated_tracks_seed_{seed}{tag}.png", dpi=300)
 
 
-if __name__ == "__main__":
-    new_model = False
-    export = True
-    repeats = 20
-    n_test = 1
-    pick_random = False
-    animate = True
-    print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
-    print(tf.config.list_physical_devices("GPU"))
-
-    if new_model:
-        model = run_training()
-        if export:
-            model.save(MODELS_ROOT + f"/new_{_datetime_str()}.h5")
-
-    else:
-        model = load_model(MODELS_ROOT + "original_model/my_model.h5")
-
+def show_test(repeats: int = 1, n_test: int = 1, pick_random: bool = True, animate: bool = False):
     # Generate some tracks and compare with truth
     for i in range(1, 1 + repeats):
         # set seed
         n_max = 10000  # TODO get length of hits table
-        # seed = random.randrange(1, n_max) if pick_random else i
-        seed = 9606
+        seed = random.randrange(1, n_max) if pick_random else i
 
         # Generate some track(s)
         generated_tracks = test(seed_0=seed, n_test=n_test)
@@ -616,3 +601,24 @@ if __name__ == "__main__":
                     plot_prediction(truth, reconstructed[: f + 1], seed, tag=f"f{f+1}:{frames_total}")
             else:
                 plot_prediction(truth, reconstructed, seed)
+
+
+if __name__ == "__main__":
+    new_model = False
+    export = True
+    repeats = 20
+    n_test = 1
+    pick_random = False
+    animate = True
+    print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
+    print(tf.config.list_physical_devices("GPU"))
+
+    if new_model:
+        model = run_training()
+        if export:
+            model.save(MODELS_ROOT + f"/new_{_datetime_str()}.h5")
+
+    else:
+        model = load_model(MODELS_ROOT + "original_model/my_model.h5")
+
+    show_test(repeats, n_test, pick_random, animate)
