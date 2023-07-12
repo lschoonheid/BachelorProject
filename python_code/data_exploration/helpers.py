@@ -1,11 +1,13 @@
 import os
+from os.path import isfile, join
+import datetime
 import pathlib
 import pickle
 import time
 import hashlib
-from typing import Callable
+from typing import Callable, Any
 from functools import wraps
-from pandas import DataFrame
+from pandas import DataFrame, read_csv
 from trackml.dataset import load_event
 from .constants import CACHE_LOC
 
@@ -104,3 +106,73 @@ def load_event_cached(
 ) -> tuple[DataFrame, ...]:
     """Load an event and cache it."""
     return load_event(prefix, parts)
+
+
+def _is_pickle(filename: str) -> bool:
+    file_extension = filename.split(".")[-1]
+    return ["pyc", "pkl"].count(file_extension) > 0
+
+
+def _is_csv(filename: str) -> bool:
+    file_extension = filename.split(".")[-1]
+    return ["csv"].count(file_extension) > 0
+
+
+def datetime_str() -> str:
+    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def save(return_object, name: str | None = None, tag: str | None = None, prefix: str = "", save=True, extension="pkl"):
+    """Wrapping function for dumping `return_object` to a pickle file with name `name` and optional tag `tag`."""
+    object_type = type(return_object).__name__
+    if name is None:
+        try:
+            name = return_object.__name__
+        except AttributeError:
+            name = object_type
+
+    # Prepare file string
+    if not save:
+        return return_object
+
+    if tag is not None:
+        tag = f"_{tag}"
+    folder_message = f" in folder `{prefix}`" if prefix else " in current folder."
+
+    time = datetime_str()
+    if _is_pickle(extension):
+        dump_pickle(return_object, f"{prefix}{name}{tag}_{time}.{extension}")
+    elif _is_csv(extension):
+        return_object.to_csv(f"{prefix}{name}{tag}_{time}.{extension}")
+    else:
+        raise ValueError(f"File extension {extension} not supported.")
+    print(f"Saved `{name} ({object_type})` as `{name}{tag}_{time}.{extension}`{folder_message}")
+
+    return return_object
+
+
+def find_file(name: str, dir: str = CACHE_LOC, extension="pkl"):
+    """Load a file in `dir` that is similar to `name`."""
+    # Check supported extension
+    is_pickle = _is_pickle(extension)
+    is_csv = _is_csv(extension)
+    if not (is_pickle or is_csv):
+        raise ValueError(f"File extension {extension} not supported.")
+
+    try:
+        # Look for files in ouput directory
+        onlyfiles = [f for f in os.listdir(dir) if isfile(join(dir, f))]
+        # See if there is a prediction matrix for this event
+        for file in onlyfiles:
+            # Check if file name and extension match
+            file_extension = file.split(".")[-1]
+            if name in file and file_extension == extension:
+                # Load file
+                if _is_pickle(file_extension):
+                    return load_pickle(dir + file)
+                elif _is_csv(file_extension):
+                    return read_csv(dir + file)
+        raise FileNotFoundError
+    except FileNotFoundError:
+        print(f"Could not find file {name} in {dir}")
+        return None

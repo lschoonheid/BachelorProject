@@ -13,7 +13,7 @@ from typing import Any
 
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 from classes.event import Event
-from data_exploration.helpers import dump_pickle, pickle_cache
+from data_exploration.helpers import datetime_str, find_file, save, pickle_cache
 
 # print(os.listdir("../input"))
 # print(os.listdir("../input/trackml/"))
@@ -221,12 +221,8 @@ def get_hard_negatives(model: Model, event_range: range = EVENT_RANGE):
     return Train_hard
 
 
-def _datetime_str() -> str:
-    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-
-
 def _get_log_dir() -> str:
-    return DIRECTORY + "training_logs/2nd_place_example/fit/" + _datetime_str()
+    return DIRECTORY + "training_logs/2nd_place_example/fit/" + datetime_str()
 
 
 def _get_tensorboard_callback():
@@ -914,29 +910,6 @@ def show_test(
                 plot_prediction(truth, reconstructed, seed)
 
 
-def save(return_object, name: str | None = None, tag: str | None = None, prefix: str = "", save=True):
-    """Wrapping function for dumping `return_object` to a pickle file with name `name` and optional tag `tag`."""
-    object_type = type(return_object).__name__
-    if name is None:
-        try:
-            name = return_object.__name__
-        except AttributeError:
-            name = object_type
-
-    # Prepare file string
-    if tag is not None:
-        tag = f"_{tag}"
-    folder_message = f" in folder `{prefix}`" if prefix else " in current folder."
-
-    time = _datetime_str()
-
-    if save:
-        dump_pickle(return_object, f"{prefix}{name}{tag}_{time}.pkl")
-        print(f"Saved `{name} ({object_type})` as `{name}{tag}_{time}.pkl`{folder_message}")
-
-    return return_object
-
-
 if __name__ == "__main__":
     new_model = False
     export = True
@@ -952,7 +925,7 @@ if __name__ == "__main__":
     if new_model:
         model = run_training()
         if export:
-            model.save(MODELS_ROOT + f"/new_{_datetime_str()}.h5")
+            model.save(MODELS_ROOT + f"/new_{datetime_str()}.h5")
     else:
         model = load_model(MODELS_ROOT + "original_model/my_model.h5")
 
@@ -966,10 +939,20 @@ if __name__ == "__main__":
         # Test model, output some visualized tracks
         show_test(event, module_id, repeats, n_test, pick_random, animate)
 
+    # Make prediction matrix for all hits in the event
+    # Look for prediction matrices already existing:
+    preload = True
+    
+    if preload:
+        preds: list[npt.NDArray] = find_file(f"preds_{event_name}", dir=DIRECTORY)
+
+    if not preload or preds is None:  # type: ignore
+        preds: list[npt.NDArray] = save(
+            make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY
+        )
+
     # Generate tracks for each hit as seed
     thr: float = 0.85
-    preds = save(make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY)
-
     tracks_all = save(
         get_all_paths(hits, thr, module_id, preds, do_redraw=True), name="tracks_all", tag=event_name, prefix=DIRECTORY
     )
