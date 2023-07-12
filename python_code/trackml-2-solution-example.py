@@ -337,6 +337,7 @@ def make_predict(
 def make_predict_matrix(
     model: Model,
     features: np.ndarray,
+    verbosity: str = '0',
 ) -> list[np.ndarray]:
     TestX = np.zeros((len(features), 10))
     TestX[:, 5:] = features
@@ -347,15 +348,15 @@ def make_predict_matrix(
 
     preds = []
 
-    for index in tqdm(range(len(features) - 1)):
+    for index in tqdm(range(len(features) - 1), desc="Generating prediction matrix"):
         TestX[index + 1 :, :5] = np.tile(features[index], (len(TestX) - index - 1, 1))
 
-        pred = model.predict(TestX[index + 1 :], batch_size=20000)[:, 0]
+        pred = model.predict(TestX[index + 1 :], batch_size=20000, verbose=verbosity)[:, 0]
         idx = np.where(pred > 0.2)[0]
 
         if len(idx) > 0:
             TestX1[idx + index + 1, 5:] = TestX[idx + index + 1, :5]
-            pred1 = model.predict(TestX1[idx + index + 1], batch_size=20000)[:, 0]
+            pred1 = model.predict(TestX1[idx + index + 1], batch_size=20000, verbose=verbosity)[:, 0]
             pred[idx] = (pred[idx] + pred1) / 2
 
         idx = np.where(pred > 0.5)[0]
@@ -381,7 +382,7 @@ def retrieve_predict(hit_id: int, preds: list[np.ndarray]) -> np.ndarray:
     """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id, by taking the prediction from the prediction matrix."""
     c = np.zeros(len(preds))
     # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-    c[preds[hit_id - 1, 0]] = preds[hit_id - 1, 1]
+    c[preds[hit_id - 1][0]] = preds[hit_id - 1][1]
     return c
 
 
@@ -894,6 +895,26 @@ def show_test(
                 plot_prediction(truth, reconstructed, seed)
 
 
+def save_csv(return_object, name: str | None = None, tag: str | None = None, save=True):
+    df = pd.DataFrame(return_object)
+
+    if name is None:
+        try:
+            name = return_object.__name__
+        except AttributeError:
+            name = type(return_object).__name__
+
+    if tag is not None:
+        tag = f"_{tag}"
+    time = _datetime_str()
+
+    if save:
+        df.to_csv(f"{name}{tag}_{time}.csv")
+        print(f"Saved `{name}` as `{name}{tag}_{time}.csv`")
+
+    return return_object
+
+
 if __name__ == "__main__":
     new_model = False
     export = True
@@ -925,22 +946,21 @@ if __name__ == "__main__":
 
     # Generate tracks for each hit as seed
     thr: float = 0.85
-    preds = make_predict_matrix(model, event.features)
-    tracks_all = get_all_paths(hits, thr, module_id, preds, do_redraw=True)
+    preds = save_csv(make_predict_matrix(model, event.features), name="preds", tag=event_name)
 
-    # Save tracks
-    time_tracks_done = _datetime_str()
-    pd.DataFrame(tracks_all).to_csv(f"tracks_all_{event_name}_{time_tracks_done}.csv")
-    print(f"Tracks saved as tracks_all_{event_name}_{time_tracks_done}.csv")
+    tracks_all = save_csv(get_all_paths(hits, thr, module_id, preds, do_redraw=True), name="tracks_all", tag=event_name)
 
     # calculate track's confidence
-    scores = get_track_scores(tracks_all)
+    scores = save_csv(get_track_scores(tracks_all), name="scores", tag=event_name)
 
     # Merge tracks
-    merged_tracks = run_merging(scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth)
+    merged_tracks = save_csv(
+        run_merging(scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth),
+        name="merged_tracks",
+        tag=event_name,
+    )
 
     # Save submission
-    submission = pd.DataFrame({"hit_id": hits.hit_id, "track_id": merged_tracks})
-    time_done = _datetime_str()
-    submission.to_csv(f"submission_{event_name}_{time_done}.csv", index=False)
-    print(f"Submission saved as submission_{event_name}_{time_done}.csv")
+    submission = save_csv(
+        pd.DataFrame({"hit_id": hits.hit_id, "track_id": merged_tracks}), name="submission", tag=event_name
+    )
