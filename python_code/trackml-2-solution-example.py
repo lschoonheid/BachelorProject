@@ -682,7 +682,9 @@ def extend_path(
         if a.max() < thr * len(path_ids):
             break
 
-        path_ids = np.append(path_ids, a.argmax())
+        # Add hit with highest probability to path
+        best_hit_id = a.argmax() + 1
+        path_ids = np.append(path_ids, best_hit_id)
         if last:
             break
 
