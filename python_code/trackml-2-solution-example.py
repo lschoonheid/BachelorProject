@@ -376,7 +376,7 @@ def make_predict_matrix(
 
 
 def retrieve_predict(hit_id: int, preds: list[npt.NDArray]) -> npt.NDArray:
-    """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id, by taking the prediction from the prediction matrix."""
+    """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as `hit_id`, by taking the prediction from the prediction matrix `preds`."""
     c = np.zeros(len(preds))
     # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
     c[preds[hit_id - 1][0]] = preds[hit_id - 1][1]
@@ -384,7 +384,7 @@ def retrieve_predict(hit_id: int, preds: list[npt.NDArray]) -> npt.NDArray:
 
 
 def get_module_id(hits: pd.DataFrame) -> npt.NDArray:
-    """Generate list of module_id for each hit with hit index as index."""
+    """Generate list of `module_id` for each hit with hit index as index."""
     # Group by volume_id, layer_id, module_id and count number of hits
     count = hits.groupby(["volume_id", "layer_id", "module_id"])["hit_id"].count().values
 
@@ -495,7 +495,8 @@ def redraw(
     # Try redrawing path with one hit removed
     if len(path) > 1:
         # Remove first added hit from path and re-predict
-        mask[path[1]] = 0
+        # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+        mask[path[1] - 1] = 0
         # Redraw
         path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
@@ -503,7 +504,8 @@ def redraw(
         if len(path2) > len(path):
             path = path2
             # Remove first added hit from path and re-predict
-            mask[path[1]] = 0
+            # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+            mask[path[1] - 1] = 0
             # Redraw
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
@@ -514,9 +516,10 @@ def redraw(
         # No imrpovement yet. Try redrawing path with second hit of redrawn path removed
         elif len(path2) > 1:
             # Add first hit of redrawn path back to mask
-            mask[path[1]] = 1
+            # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+            mask[path[1] - 1] = 1
             # Remove second hit of redrawn path from mask
-            mask[path2[1]] = 0
+            mask[path2[1] - 1] = 0
             # Redraw
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
@@ -942,23 +945,28 @@ if __name__ == "__main__":
     # Make prediction matrix for all hits in the event
     # Look for prediction matrices already existing:
     preload = True
-    
+    _make_predict = lambda: save(
+        make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY
+    )
     if preload:
-        preds: list[npt.NDArray] = find_file(f"preds_{event_name}", dir=DIRECTORY)
-
-    if not preload or preds is None:  # type: ignore
-        preds: list[npt.NDArray] = save(
-            make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY
-        )
+        preds: list[npt.NDArray] = find_file(
+            f"preds_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_predict()
+        )  # type: ignore
+    else:
+        preds: list[npt.NDArray] = _make_predict()
 
     # Generate tracks for each hit as seed
     thr: float = 0.85
-    tracks_all = save(
+    _make_tracks = lambda: save(
         get_all_paths(hits, thr, module_id, preds, do_redraw=True), name="tracks_all", tag=event_name, prefix=DIRECTORY
     )
+    if preload:
+        tracks_all = find_file(f"tracks_all_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_tracks())  # type: ignore
+    else:
+        tracks_all = _make_tracks()
 
     # calculate track's confidence
-    scores = save(get_track_scores(tracks_all), name="scores", tag=event_name, prefix=DIRECTORY)
+    scores = save(get_track_scores(tracks_all), name="scores", tag=event_name, prefix=DIRECTORY)  # type: ignore
 
     # Merge tracks
     merged_tracks = save(
