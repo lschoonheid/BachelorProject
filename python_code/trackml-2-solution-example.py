@@ -301,7 +301,8 @@ def make_predict(
     Tx = np.zeros((len(hits), 10))
     # Set first five columns of Tx to be the features of the hit with hit_id
     # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-    Tx[:, :5] = np.tile(features[hit_id - 1], (len(Tx), 1))
+    hit_index = hit_id - 1
+    Tx[:, :5] = np.tile(features[hit_index], (len(Tx), 1))
     # Set last five columns of Tx to be the features of all hits
     Tx[:, 5:] = features
 
@@ -443,25 +444,27 @@ def get_path(
         assert features is not None and hits is not None, "Either preds or features and truth must be provided"
 
     # Convert to index
-    i_0 = hit_id - 1
-    path = [i_0]
+    hit_index = hit_id - 1
+    path_indices = [hit_index]
     a = 0
     while True:
         # Predict probability of each pair of hits with the last hit in the path
+        hit_id_last = path_indices[-1] + 1
         if preds is not None:
-            p = retrieve_predict(path[-1] + 1, preds)
+            p = retrieve_predict(hit_id_last, preds)
         else:
             if features is None or hits is None:
                 raise ValueError("Either preds or features and truth must be provided")
-            p = make_predict(features, hits, path[-1] + 1, thr / 2)
+
+            p = make_predict(features, hits, hit_id_last, thr / 2)
 
         # Generate mask of hits that have a probability above the threshold
         mask = (p > thr) * mask
         # Mask last added hit
-        mask[path[-1]] = 0
+        mask[path_indices[-1]] = 0
 
         if skip_same_module:
-            mask = mask_same_module(mask, path, p, thr, module_id)
+            mask = mask_same_module(mask, path_indices, p, thr, module_id)
 
         # `a` is the culuminative probability between each hit in the path
         # At each step we look at the best candidate for the whole (previously geberate) track
@@ -488,44 +491,44 @@ def get_path(
         # a[n] = sum(p(n belonging to path))
 
         # Breaking condition: if best average probability is below threshold, end path
-        if a.max() < thr * len(path):
+        if a.max() < thr * len(path_indices):
             break
         # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
-        path.append(a.argmax())  # type: ignore
+        path_indices.append(a.argmax())  # type: ignore
     # Convert indices back to hit_ids by adding 1
-    return np.array(path) + 1
+    return np.array(path_indices) + 1
 
 
 def redraw(
-    path: npt.NDArray, hit_id: int, thr: float, mask: npt.NDArray, module_id: npt.NDArray, preds: list[npt.NDArray]
+    path_ids: npt.NDArray, hit_id: int, thr: float, mask: npt.NDArray, module_id: npt.NDArray, preds: list[npt.NDArray]
 ):
     """Try redrawing path with one hit removed for improved confidence."""
     # Try redrawing path with one hit removed
-    if len(path) > 1:
+    if len(path_ids) > 1:
         # Remove first added hit from path and re-predict
         # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-        mask[path[1] - 1] = 0
+        mask[path_ids[1] - 1] = 0
         # Redraw
         path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
         # Check for improvement
-        if len(path2) > len(path):
-            path = path2
+        if len(path2) > len(path_ids):
+            path_ids = path2
             # Remove first added hit from path and re-predict
             # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-            mask[path[1] - 1] = 0
+            mask[path_ids[1] - 1] = 0
             # Redraw
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
             # Check for improvement
-            if len(path2) > len(path):
-                path = path2
+            if len(path2) > len(path_ids):
+                path_ids = path2
 
         # No improvement yet. Try redrawing path with second hit of redrawn path removed
         elif len(path2) > 1:
             # Add first hit of redrawn path back to mask
             # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-            mask[path[1] - 1] = 1
+            mask[path_ids[1] - 1] = 1
             # Remove second hit of redrawn path from mask
             mask[path2[1] - 1] = 0
 
@@ -533,9 +536,9 @@ def redraw(
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
             # Check for improvement
-            if len(path2) > len(path):
-                path = path2
-    return path
+            if len(path2) > len(path_ids):
+                path_ids = path2
+    return path_ids
 
 
 def get_all_paths(
@@ -632,7 +635,7 @@ def evaluate_tracks(tracks: npt.NDArray, truth: pd.DataFrame):
 
 
 def extend_path(
-    path: npt.NDArray,
+    path_ids: npt.NDArray,
     thr: float,
     mask: npt.NDArray,
     module_id: npt.NDArray,
@@ -644,7 +647,7 @@ def extend_path(
     a = 0  # Cumulative probability
 
     # Generate sum of prediction probabilities for all hits in path except the last
-    for hit_id in path[:-1]:
+    for hit_id in path_ids[:-1]:
         p = retrieve_predict(hit_id, preds)
         if last == False:
             mask = (p > thr) * mask
@@ -653,38 +656,38 @@ def extend_path(
         mask[hit_id - 1] = 0
 
         if skip_same_module:
-            mask = mask_same_module(mask, path, p, thr, module_id)
+            mask = mask_same_module(mask, path_ids, p, thr, module_id)
 
         a = (p + a) * mask
 
     # Add hits until no hits with a probability above the threshold are found
     while True:
-        p = retrieve_predict(path[-1], preds)
+        p = retrieve_predict(path_ids[-1], preds)
 
         if last == False:
             mask = (p > thr) * mask
 
         # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
         # Occlude last added hit
-        mask[path[-1] - 1] = 0
+        mask[path_ids[-1] - 1] = 0
 
         if skip_same_module:
-            mask = mask_same_module(mask, path, p, thr, module_id)
+            mask = mask_same_module(mask, path_ids, p, thr, module_id)
 
         a = (p + a) * mask
 
-        if a.max() < thr * len(path):
+        if a.max() < thr * len(path_ids):
             break
 
-        path = np.append(path, a.argmax())
+        path_ids = np.append(path_ids, a.argmax())
         if last:
             break
 
-    return path
+    return path_ids
 
 
 # TODO: add comments
-def get_strays(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
+def get_leftovers(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
     """Get path from `hit_index` seed and select hits from that path that have not been assigned to a (merged) track yet."""
     path = np.array(tracks_all[hit_index])
     path_indices = path - 1
@@ -694,17 +697,19 @@ def get_strays(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
     return path
 
 
-# TODO: add comments
 def merge_tracks(
     thr: int,
     ordered_by_score: npt.NDArray | None = None,
     scores: npt.NDArray | None = None,
     merged_tracks=None,
+    max_track_id=0,
     do_extend=False,
     thr_extend_0: int | None = None,
     thr_extend_1: float | None = None,
     module_id=None,
     preds=None,
+    verbose: bool = True,
+    debug=False,
 ):
     # Check input variables
     if do_extend and (thr_extend_0 is None or thr_extend_1 is None or module_id is None or preds is None):
@@ -716,6 +721,10 @@ def merge_tracks(
 
     if merged_tracks is None:
         merged_tracks = np.zeros(len(hits))
+
+    # When debugging, start with seed index 0 for easier evaluation of path
+    if debug:
+        ordered_by_score = [i for i in range(len(merged_tracks))]
 
     # Merge tracks by confidence
     for hit_index in tqdm(ordered_by_score, desc="Assigning track id's"):
@@ -729,22 +738,37 @@ def merge_tracks(
         if len(leftovers) > thr:
             # New track defined, increase highest track id
             max_track_id += 1
+            if max_track_id in [2244, 4334]:
+                pass
             path_indices = leftovers - 1
             # Assign current track id to leftover hits in path
             merged_tracks[path_indices] = max_track_id
 
-    return merged_tracks
+    # Print number of tracks
+    if verbose:
+        print("Number of tracks:", max_track_id)
+
+    return merged_tracks, max_track_id
 
 
 # TODO: add comments
-def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False):
-    for track_id in range(1, int(merged_tracks.max()) + 1):
-        path = np.where(merged_tracks == track_id)[0]
+def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False, last=False):
+    # Go over all previously assigned tracks
+    for track_id in tqdm(range(1, int(merged_tracks.max()) + 1), "Extending tracks"):
+        # Select hits that belong to current track id
+        # Add 1 because track_id starts at 1 and index starts at 0
+        path = np.where(merged_tracks == track_id)[0] + 1
+
+        if len(path) == 0:
+            print("Track", track_id, "has no hits")
+            continue
 
         if check_modulus and len(path) % 2 != 0:
             continue
 
-        path = extend_path(path=path, thr=thr, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)
+        path = extend_path(
+            path_ids=path, thr=thr, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds, last=last
+        )
         path_indices = path - 1
         merged_tracks[path_indices] = track_id
     return merged_tracks
@@ -766,21 +790,23 @@ def run_merging(
     ordered_by_score = np.argsort(scores)[::-1]
 
     if not multi_stage:
-        merged_tracks = merge_tracks(thr=3, ordered_by_score=ordered_by_score)
+        merged_tracks, _ = merge_tracks(thr=3, ordered_by_score=ordered_by_score)
         evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
         return merged_tracks
 
     # multistage
-    merged_tracks = merge_tracks(thr=6, ordered_by_score=ordered_by_score)
+    max_track_id = 0
+    merged_tracks, max_track_id = merge_tracks(thr=6, ordered_by_score=ordered_by_score, max_track_id=max_track_id)
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     merged_tracks = extend_tracks(merged_tracks, 0.6, module_id, preds)
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
-    merged_tracks = merge_tracks(
+    merged_tracks, max_track_id = merge_tracks(
         thr=3,
         ordered_by_score=ordered_by_score,
         merged_tracks=merged_tracks,
+        max_track_id=max_track_id,
         do_extend=True,
         thr_extend_0=3,
         thr_extend_1=0.6,
@@ -790,17 +816,18 @@ def run_merging(
     merged_tracks = extend_tracks(merged_tracks, 0.5, module_id, preds)
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
-    merged_tracks = merge_tracks(
+    merged_tracks, max_track_id = merge_tracks(
         thr=2,
         ordered_by_score=ordered_by_score,
         merged_tracks=merged_tracks,
+        max_track_id=max_track_id,
         do_extend=True,
         thr_extend_0=1,
         thr_extend_1=0.5,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
-    merged_tracks = extend_tracks(merged_tracks, 0.5, module_id, preds, check_modulus=True)
+    merged_tracks = extend_tracks(merged_tracks, 0.5, module_id, preds, check_modulus=True, last=True)
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     return merged_tracks
