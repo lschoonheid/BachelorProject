@@ -334,6 +334,8 @@ def make_predict(
 def make_predict_matrix(
     model: Model,
     features: npt.NDArray,
+    thr_0=0.2,
+    thr_1=0.5,
     verbosity: str = "0",
 ) -> list[npt.NDArray]:
     TestX = np.zeros((len(features), 10))
@@ -349,14 +351,15 @@ def make_predict_matrix(
         TestX[index + 1 :, :5] = np.tile(features[index], (len(TestX) - index - 1, 1))
 
         pred = model.predict(TestX[index + 1 :], batch_size=20000, verbose=verbosity)[:, 0]
-        idx = np.where(pred > 0.2)[0]
+        # Filter predictions above threshold
+        idx = np.where(pred > thr_0)[0]
 
         if len(idx) > 0:
             TestX1[idx + index + 1, 5:] = TestX[idx + index + 1, :5]
             pred1 = model.predict(TestX1[idx + index + 1], batch_size=20000, verbose=verbosity)[:, 0]
             pred[idx] = (pred[idx] + pred1) / 2
 
-        idx = np.where(pred > 0.5)[0]
+        idx = np.where(pred > thr_1)[0]
 
         preds.append([idx + index + 1, pred[idx]])
 
@@ -513,17 +516,19 @@ def redraw(
             if len(path2) > len(path):
                 path = path2
 
-        # No imrpovement yet. Try redrawing path with second hit of redrawn path removed
+        # No improvement yet. Try redrawing path with second hit of redrawn path removed
         elif len(path2) > 1:
             # Add first hit of redrawn path back to mask
             # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
             mask[path[1] - 1] = 1
             # Remove second hit of redrawn path from mask
             mask[path2[1] - 1] = 0
+
             # Redraw
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
-            if len(path) < len(path2):
+            # Check for improvement
+            if len(path2) > len(path):
                 path = path2
     return path
 
@@ -533,7 +538,8 @@ def get_all_paths(
 ) -> list[npt.NDArray]:
     """Generate all paths for all hits in the event as seeds. Returns list of hit_ids per seed."""
     tracks_all = []
-    for index in tqdm(range(len(preds)), desc="Generating all paths"):
+    N = len(preds)
+    for index in tqdm(range(N), desc="Generating all paths"):
         # Shift hit_id -> index + 1 because hit_id starts at 1 and index starts at 0
         hit_id = index + 1
         mask = np.ones(len(hits))
@@ -548,7 +554,7 @@ def get_all_paths(
 def get_track_scores(tracks_all: list[npt.NDArray], factor: int = 8) -> npt.NDArray:
     """Generate confidence score for each track."""
     scores = np.zeros(len(tracks_all))
-    for path_index, path in enumerate(tracks_all):
+    for seed_index, path in tqdm(enumerate(tracks_all), total=len(tracks_all), desc="Generating track scores"):
         n_hits = len(path)
 
         # Skip paths with only one hit
@@ -568,38 +574,44 @@ def get_track_scores(tracks_all: list[npt.NDArray], factor: int = 8) -> npt.NDAr
             # fp = estimated false positives
             # (balance) factor = 8 (why?); punishing false positives more than true positives
             # n_hits = number of hits in path
-            scores[path_index] = (tp - fp * factor - n_hits) / n_hits / (n_hits - 1)
+            scores[seed_index] = (tp - fp * factor - n_hits) / n_hits / (n_hits - 1)
         else:
             # Useless path, set score to -inf
-            scores[path_index] = -np.inf
+            scores[seed_index] = -np.inf
     return scores
 
 
 # TODO: add comments
 def score_event_fast(submission, truth: pd.DataFrame):
-    """Calculate score for a single event based on `truth` information."""
-    truth = truth[["hit_id", "particle_id", "weight"]].merge(submission, how="left", on="hit_id")
-    df = truth.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
-    truth = truth.merge(df, how="left", on=["track_id", "particle_id"])
+    """Calculate score r a single event based on `truth` information."""
+    combined = truth[["hit_id", "particle_id", "weight"]].merge(submission, how="left", on="hit_id")
+    df = combined.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
+    combined = combined.merge(df, how="left", on=["track_id", "particle_id"])
 
     df1 = df.groupby(["particle_id"]).count_both.sum().to_frame("count_particle").reset_index()
-    truth = truth.merge(df1, how="left", on="particle_id")
+    combined = combined.merge(df1, how="left", on="particle_id")
     df1 = df.groupby(["track_id"]).count_both.sum().to_frame("count_track").reset_index()
-    truth = truth.merge(df1, how="left", on="track_id")
-    truth.count_both *= 2
-    score = truth[(truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)].weight.sum()
-    particles = truth[
-        (truth.count_both > truth.count_particle) & (truth.count_both > truth.count_track)
+    combined = combined.merge(df1, how="left", on="track_id")
+    combined.count_both *= 2
+    score = combined[
+        (combined.count_both > combined.count_particle) & (combined.count_both > combined.count_track)
+    ].weight.sum()
+    particles = combined[
+        (combined.count_both > combined.count_particle) & (combined.count_both > combined.count_track)
     ].particle_id.unique()
 
-    return score, truth[truth.particle_id.isin(particles)].weight.sum(), 1 - truth[truth.track_id > 0].weight.sum()
+    return (
+        score,
+        combined[combined.particle_id.isin(particles)].weight.sum(),
+        1 - combined[combined.track_id > 0].weight.sum(),
+    )
 
 
 # TODO: add comments
 def evaluate_tracks(tracks: npt.NDArray, truth: pd.DataFrame):
     """Evaluate tracks by comparing them to the ground truth."""
     submission = pd.DataFrame({"hit_id": truth.hit_id, "track_id": tracks})
-    score = score_event_fast(truth, submission)[0]
+    score = score_event_fast(submission, truth)[0]
     track_id = tracks.max()
     print(
         "%.4f %2.2f %4d %5d %.4f %.4f"
@@ -666,12 +678,18 @@ def extend_path(
     return path
 
 
-def _get_path(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
+# TODO: add comments
+def get_strays(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
+    """Get path from `hit_index` seed and select hits from that path that have not been assigned to a (merged) track yet."""
     path = np.array(tracks_all[hit_index])
-    path = path[np.where(merged_tracks[path] == 0)[0]]
+    path_indices = path - 1
+    # Select seeds in `path` that have not been assigned to a (merged) track yet
+    empties = np.where(merged_tracks[path_indices] == 0)[0]
+    path = path[empties]
     return path
 
 
+# TODO: add comments
 def merge_tracks(
     thr: int,
     ordered_by_score: npt.NDArray | None = None,
@@ -697,18 +715,20 @@ def merge_tracks(
     # Merge tracks by confidence
     track_id = 0
     for hit_index in ordered_by_score:
-        path = _get_path(hit_index, tracks_all, merged_tracks)
+        path = get_strays(hit_index, tracks_all, merged_tracks)
 
         if do_extend and len(path) > thr_extend_0:  # type: ignore
             path = extend_path(path, thr=thr_extend_1, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)  # type: ignore
 
         if len(path) > thr:
             track_id = track_id + 1
-            merged_tracks[path] = track_id
+            path_indices = path - 1
+            merged_tracks[path_indices] = track_id
 
     return merged_tracks
 
 
+# TODO: add comments
 def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False):
     for track_id in range(1, int(merged_tracks.max()) + 1):
         path = np.where(merged_tracks == track_id)[0]
@@ -717,7 +737,8 @@ def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False):
             continue
 
         path = extend_path(path=path, thr=thr, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)
-        merged_tracks[path] = track_id
+        path_indices = path - 1
+        merged_tracks[path_indices] = track_id
     return merged_tracks
 
 
@@ -915,7 +936,7 @@ def show_test(
 
 if __name__ == "__main__":
     new_model = False
-    export = True
+    do_export = False
     do_test: bool = False
     repeats = 20
     n_test = 1
@@ -927,7 +948,7 @@ if __name__ == "__main__":
     # Get model
     if new_model:
         model = run_training()
-        if export:
+        if do_export:
             model.save(MODELS_ROOT + f"/new_{datetime_str()}.h5")
     else:
         model = load_model(MODELS_ROOT + "original_model/my_model.h5")
@@ -946,7 +967,7 @@ if __name__ == "__main__":
     # Look for prediction matrices already existing:
     preload = True
     _make_predict = lambda: save(
-        make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY
+        make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY, save=do_export
     )
     if preload:
         preds: list[npt.NDArray] = find_file(
@@ -958,22 +979,32 @@ if __name__ == "__main__":
     # Generate tracks for each hit as seed
     thr: float = 0.85
     _make_tracks = lambda: save(
-        get_all_paths(hits, thr, module_id, preds, do_redraw=True), name="tracks_all", tag=event_name, prefix=DIRECTORY
+        get_all_paths(hits, thr, module_id, preds, do_redraw=True),
+        name="tracks_all",
+        tag=event_name,
+        prefix=DIRECTORY,
+        save=do_export,
     )
     if preload:
-        tracks_all = find_file(f"tracks_all_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_tracks())  # type: ignore
+        tracks_all: list[npt.NDArray] = find_file(f"tracks_all_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_tracks())  # type: ignore
     else:
-        tracks_all = _make_tracks()
+        tracks_all: list[npt.NDArray] = _make_tracks()
 
     # calculate track's confidence
-    scores = save(get_track_scores(tracks_all), name="scores", tag=event_name, prefix=DIRECTORY)  # type: ignore
+    _make_scores = lambda: save(
+        get_track_scores(tracks_all), name="scores", tag=event_name, prefix=DIRECTORY, save=do_export
+    )
+    if preload:
+        scores: npt.NDArray = find_file(f"scores_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_scores())  # type: ignore
+    else:
+        scores: npt.NDArray = _make_scores()
 
     # Merge tracks
     merged_tracks = save(
         run_merging(scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth),
         name="merged_tracks",
         tag=event_name,
-    )
+    )  # type: ignore
 
     # Save submission
     submission = save(
@@ -981,4 +1012,5 @@ if __name__ == "__main__":
         name="submission",
         tag=event_name,
         prefix=DIRECTORY,
+        save=do_export,
     )
