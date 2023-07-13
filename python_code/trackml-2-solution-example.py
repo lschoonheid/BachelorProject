@@ -713,17 +713,20 @@ def merge_tracks(
         merged_tracks = np.zeros(len(hits))
 
     # Merge tracks by confidence
-    track_id = 0
-    for hit_index in ordered_by_score:
-        path = get_strays(hit_index, tracks_all, merged_tracks)
+    for hit_index in tqdm(ordered_by_score, desc="Assigning track id's"):
+        # Get path from `hit_index` seed, filtered on hits that have not been assigned to a (merged) track yet
+        leftovers = get_leftovers(hit_index, tracks_all, merged_tracks)
 
-        if do_extend and len(path) > thr_extend_0:  # type: ignore
-            path = extend_path(path, thr=thr_extend_1, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)  # type: ignore
+        if do_extend and len(leftovers) > thr_extend_0:  # type: ignore
+            leftovers = extend_path(leftovers, thr=thr_extend_1, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)  # type: ignore
 
-        if len(path) > thr:
-            track_id = track_id + 1
-            path_indices = path - 1
-            merged_tracks[path_indices] = track_id
+        # If leftover track is long enough, assign track id
+        if len(leftovers) > thr:
+            # New track defined, increase highest track id
+            max_track_id += 1
+            path_indices = leftovers - 1
+            # Assign current track id to leftover hits in path
+            merged_tracks[path_indices] = max_track_id
 
     return merged_tracks
 
