@@ -509,8 +509,9 @@ def redraw(
     if len(path_ids) > 1:
         # Remove first added hit from path and re-predict
         # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-        mask[path_ids[1] - 1] = 0
-        # Redraw
+        second_hit_index = path_ids[1] - 1
+        mask[second_hit_index] = 0
+        # Redraw; try second best hit as second hit
         path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
         # Check for improvement
@@ -518,8 +519,10 @@ def redraw(
             path_ids = path2
             # Remove first added hit from path and re-predict
             # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-            mask[path_ids[1] - 1] = 0
-            # Redraw
+            second_hit_index = path_ids[1] - 1
+            mask[second_hit_index] = 0
+
+            # Redraw again; try third best hit as second hit
             path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
 
             # Check for improvement
@@ -593,7 +596,7 @@ def get_track_scores(tracks_all: list[npt.NDArray], factor: int = 8) -> npt.NDAr
 
 # TODO: add comments
 def score_event_fast(submission, truth: pd.DataFrame):
-    """Calculate score r a single event based on `truth` information."""
+    """Calculate score of a single event based on `truth` information."""
     combined = truth[["hit_id", "particle_id", "weight"]].merge(submission, how="left", on="hit_id")
     df = combined.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
     combined = combined.merge(df, how="left", on=["track_id", "particle_id"])
@@ -622,13 +625,13 @@ def evaluate_tracks(tracks: npt.NDArray, truth: pd.DataFrame):
     """Evaluate tracks by comparing them to the ground truth."""
     submission = pd.DataFrame({"hit_id": truth.hit_id, "track_id": tracks})
     score = score_event_fast(submission, truth)[0]
-    track_id = tracks.max()
+    tracks_count = tracks.max()
     print(
-        "%.4f %2.2f %4d %5d %.4f %.4f"
+        "event score: %.4f | hits per track: %2.2f | #tracks: %4d | #noise %5d | weight missed %.4f | weight of unassigned %.4f"
         % (
             score,
-            np.sum(tracks > 0) / track_id,
-            track_id,
+            np.sum(tracks > 0) / tracks_count,
+            tracks_count,
             np.sum(tracks == 0),
             1 - score - np.sum(truth.weight.values[tracks == 0]),
             np.sum(truth.weight.values[tracks == 0]),
@@ -801,7 +804,7 @@ def run_merging(
     merged_tracks, max_track_id = merge_tracks(thr=6, ordered_by_score=ordered_by_score, max_track_id=max_track_id)
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
-    merged_tracks = extend_tracks(merged_tracks, 0.6, module_id, preds)
+    merged_tracks = extend_tracks(merged_tracks, thr=0.6, module_id=module_id, preds=preds)
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     merged_tracks, max_track_id = merge_tracks(
@@ -812,6 +815,8 @@ def run_merging(
         do_extend=True,
         thr_extend_0=3,
         thr_extend_1=0.6,
+        module_id=module_id,
+        preds=preds,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -826,6 +831,8 @@ def run_merging(
         do_extend=True,
         thr_extend_0=1,
         thr_extend_1=0.5,
+        module_id=module_id,
+        preds=preds,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -973,7 +980,8 @@ def show_test(
 
 if __name__ == "__main__":
     new_model = False
-    do_export = False
+    do_export = True
+    preload = True
     do_test: bool = False
     repeats = 20
     n_test = 1
@@ -1002,7 +1010,6 @@ if __name__ == "__main__":
 
     # Make prediction matrix for all hits in the event
     # Look for prediction matrices already existing:
-    preload = True
     _make_predict = lambda: save(
         make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY, save=do_export
     )
