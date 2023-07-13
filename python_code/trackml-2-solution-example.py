@@ -385,8 +385,10 @@ def retrieve_predict(hit_id: int, preds: list[npt.NDArray]) -> npt.NDArray:
     # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
     hit_index = hit_id - 1
     hit_preds = preds[hit_index]
+
     candidate_indices = hit_preds[0]
     candidate_probabilities = hit_preds[1]
+
     p[candidate_indices] = candidate_probabilities
     return p
 
@@ -653,7 +655,8 @@ def extend_path(
             mask = (p > thr) * mask
         # Occlude current hit
         # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-        mask[hit_id - 1] = 0
+        hit_index = hit_id - 1
+        mask[hit_index] = 0
 
         if skip_same_module:
             mask = mask_same_module(mask, path_ids, p, thr, module_id)
@@ -686,7 +689,6 @@ def extend_path(
     return path_ids
 
 
-# TODO: add comments
 def get_leftovers(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
     """Get path from `hit_index` seed and select hits from that path that have not been assigned to a (merged) track yet."""
     path = np.array(tracks_all[hit_index])
@@ -724,23 +726,21 @@ def merge_tracks(
 
     # When debugging, start with seed index 0 for easier evaluation of path
     if debug:
-        ordered_by_score = [i for i in range(len(merged_tracks))]
+        ordered_by_score = [i for i in range(len(merged_tracks))]  # type: ignore
 
     # Merge tracks by confidence
     for hit_index in tqdm(ordered_by_score, desc="Assigning track id's"):
         # Get path from `hit_index` seed, filtered on hits that have not been assigned to a (merged) track yet
-        leftovers = get_leftovers(hit_index, tracks_all, merged_tracks)
+        leftovers_ids = get_leftovers(hit_index, tracks_all, merged_tracks)
 
-        if do_extend and len(leftovers) > thr_extend_0:  # type: ignore
-            leftovers = extend_path(leftovers, thr=thr_extend_1, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)  # type: ignore
+        if do_extend and len(leftovers_ids) > thr_extend_0:  # type: ignore
+            leftovers_ids = extend_path(leftovers_ids, thr=thr_extend_1, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)  # type: ignore
 
         # If leftover track is long enough, assign track id
-        if len(leftovers) > thr:
+        if len(leftovers_ids) > thr:
             # New track defined, increase highest track id
             max_track_id += 1
-            if max_track_id in [2244, 4334]:
-                pass
-            path_indices = leftovers - 1
+            path_indices = leftovers_ids - 1
             # Assign current track id to leftover hits in path
             merged_tracks[path_indices] = max_track_id
 
@@ -757,19 +757,19 @@ def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False, las
     for track_id in tqdm(range(1, int(merged_tracks.max()) + 1), "Extending tracks"):
         # Select hits that belong to current track id
         # Add 1 because track_id starts at 1 and index starts at 0
-        path = np.where(merged_tracks == track_id)[0] + 1
+        path_ids = np.where(merged_tracks == track_id)[0] + 1
 
-        if len(path) == 0:
+        if len(path_ids) == 0:
             print("Track", track_id, "has no hits")
             continue
 
-        if check_modulus and len(path) % 2 != 0:
+        if check_modulus and len(path_ids) % 2 != 0:
             continue
 
-        path = extend_path(
-            path_ids=path, thr=thr, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds, last=last
+        path_ids = extend_path(
+            path_ids=path_ids, thr=thr, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds, last=last
         )
-        path_indices = path - 1
+        path_indices = path_ids - 1
         merged_tracks[path_indices] = track_id
     return merged_tracks
 
