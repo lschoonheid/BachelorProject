@@ -14,6 +14,7 @@ from typing import Any
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 from classes.event import Event
 from data_exploration.helpers import datetime_str, find_file, save, pickle_cache
+from trackml.score import score_event
 
 # print(os.listdir("../input"))
 # print(os.listdir("../input/trackml/"))
@@ -1044,17 +1045,35 @@ if __name__ == "__main__":
         scores: npt.NDArray = _make_scores()
 
     # Merge tracks
-    merged_tracks = save(
+    _make_tracks = lambda: save(
         run_merging(scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth),
         name="merged_tracks",
         tag=event_name,
+        prefix=DIRECTORY,
+        save=do_export,
     )  # type: ignore
+    if preload:
+        merged_tracks: npt.NDArray = find_file(
+            f"merged_tracks_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_tracks()
+        )  # type: ignore
+    else:
+        merged_tracks: npt.NDArray = _make_tracks()
 
     # Save submission
-    submission = save(
+    _make_submission = lambda: save(
         pd.DataFrame({"hit_id": hits.hit_id, "track_id": merged_tracks}),
         name="submission",
         tag=event_name,
         prefix=DIRECTORY,
         save=do_export,
     )
+    if preload:
+        submission: pd.DataFrame = find_file(
+            f"submission_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_submission()
+        )  # type: ignore
+    else:
+        submission: pd.DataFrame = _make_submission()
+
+    # Evaluate submission
+    score = score_event(event.truth, submission)
+    print("TrackML Score:", score)
