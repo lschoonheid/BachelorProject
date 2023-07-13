@@ -151,7 +151,7 @@ def save(return_object, name: str | None = None, tag: str | None = None, prefix:
     return return_object
 
 
-def find_file(name: str, dir: str = CACHE_LOC, extension="pkl"):
+def find_file(name: str, dir: str = CACHE_LOC, extension="pkl", fallback_func: Callable | None = None):
     """Load a file in `dir` that is similar to `name`."""
     # Check supported extension
     is_pickle = _is_pickle(extension)
@@ -167,6 +167,8 @@ def find_file(name: str, dir: str = CACHE_LOC, extension="pkl"):
             # Check if file name and extension match
             file_extension = file.split(".")[-1]
             if name in file and file_extension == extension:
+                print(f"Found `{file}` in {dir}")
+
                 # Load file
                 if _is_pickle(file_extension):
                     return load_pickle(dir + file)
@@ -174,5 +176,7 @@ def find_file(name: str, dir: str = CACHE_LOC, extension="pkl"):
                     return read_csv(dir + file)
         raise FileNotFoundError
     except FileNotFoundError:
-        print(f"Could not find file {name} in {dir}")
+        print(f"Could not find file `{name}` in {dir}")
+        if fallback_func is not None:
+            return fallback_func()
         return None
