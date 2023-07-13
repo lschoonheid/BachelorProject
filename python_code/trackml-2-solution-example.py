@@ -380,10 +380,14 @@ def make_predict_matrix(
 
 def retrieve_predict(hit_id: int, preds: list[npt.NDArray]) -> npt.NDArray:
     """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as `hit_id`, by taking the prediction from the prediction matrix `preds`."""
-    c = np.zeros(len(preds))
+    p = np.zeros(len(preds))
     # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-    c[preds[hit_id - 1][0]] = preds[hit_id - 1][1]
-    return c
+    hit_index = hit_id - 1
+    hit_preds = preds[hit_index]
+    candidate_indices = hit_preds[0]
+    candidate_probabilities = hit_preds[1]
+    p[candidate_indices] = candidate_probabilities
+    return p
 
 
 def get_module_id(hits: pd.DataFrame) -> npt.NDArray:
@@ -407,16 +411,17 @@ def get_module_id(hits: pd.DataFrame) -> npt.NDArray:
 
 
 def mask_same_module(
-    mask: npt.NDArray, path: npt.NDArray | list[int], p: npt.NDArray, thr: float, module_id: npt.NDArray
+    mask: npt.NDArray, path_ids: npt.NDArray | list[int], p: npt.NDArray, thr: float, module_id: npt.NDArray
 ) -> npt.NDArray:
     """Skip hits that are in the same module as any hit in the path, because the best hit is already found for this module."""
-    cand = np.where(p > thr)[0]  # indices of candidate hits
-    if len(cand) > 0:
-        cand_module_ids = module_id[cand]  # module ids of candidate hits
-        path_module_ids = module_id[path]  # module ids of hits in path
+    cand_indices = np.where(p > thr)[0]  # indices of candidate hits
+    path_indices = np.array(path_ids) - 1
+    if len(cand_indices) > 0:
+        cand_module_ids = module_id[cand_indices]  # module ids of candidate hits
+        path_module_ids = module_id[path_indices]  # module ids of hits in path
         overlap = np.isin(cand_module_ids, path_module_ids)
         # Mask out hits that are in the same module as any hit in the path
-        mask[cand[overlap]] = 0
+        mask[cand_indices[overlap]] = 0
     return mask
 
 
