@@ -1,15 +1,12 @@
 import numpy as np
 import pandas as pd
 import os
-from keras.models import Model, Sequential, load_model
-from keras.layers import Dense, Input
-from keras.optimizers import Adam
-from tqdm import tqdm_notebook
-from tqdm import tqdm
-from data_exploration.helpers import pickle_cache
-import zipfile
 
-DATA_ROOT = "/data/atlas/users/lschoonh/BachelorProject/data/"
+from tqdm import tqdm
+from data_exploration.helpers import pickle_cache, save, find_file
+
+DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
+DATA_ROOT = DIRECTORY + "data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 prefix = DATA_SAMPLE
 
@@ -62,29 +59,29 @@ def get_predict(hit, thr=0.5):
     return pred
 
 
-def get_path2(hit, mask, thr):
-    path = [hit]
+def get_path2(hit, mask, thr, preds, module_id):
+    path_indices = [hit]
     a = 0
     while True:
-        c = get_predict2(path[-1])
-        mask = (c > thr) * mask
-        mask[path[-1]] = 0
+        p = retrieve_predict(path_indices[-1], preds)
+        mask = (p > thr) * mask
+        mask[path_indices[-1]] = 0
 
         if 1:
-            cand = np.where(c > thr)[0]
+            cand = np.where(p > thr)[0]
             if len(cand) > 0:
-                mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
+                mask[cand[np.isin(module_id[cand], module_id[path_indices])]] = 0
 
-        a = (c + a) * mask
-        if a.max() < thr * len(path):
+        a = (p + a) * mask
+        if a.max() < thr * len(path_indices):
             break
-        path.append(a.argmax())
-    return path
+        path_indices.append(a.argmax())
+    return path_indices
 
 
-def get_predict2(p):
+def retrieve_predict(index, preds):
     c = np.zeros(len(preds))
-    c[preds[p, 0]] = preds[p, 1]  # type: ignore
+    c[preds[index, 0]] = preds[index, 1]  # type: ignore
     return c
 
 
@@ -99,7 +96,6 @@ def get_track_scores(tracks_all, n=4, limit: int | None = None):
 
     for i, path in tqdm(enumerate(track_selection), total=len(tracks_all), desc="getting tracks scores"):
         count = len(path)
-        print((path))
 
         if count > 1:
             tp = 0
@@ -148,10 +144,10 @@ def evaluate_tracks(tracks, truth):
     )
 
 
-def extend_path(path, mask, thr, last=False):
+def extend_path(path, mask, thr, preds, last=False):
     a = 0
     for p in path[:-1]:
-        c = get_predict2(p)
+        c = retrieve_predict(p, preds)
         if last == False:
             mask = (c > thr) * mask
         mask[p] = 0
@@ -160,7 +156,7 @@ def extend_path(path, mask, thr, last=False):
         a = (c + a) * mask
 
     while True:
-        c = get_predict2(path[-1])
+        c = retrieve_predict(path[-1], preds)
         if last == False:
             mask = (c > thr) * mask
         mask[path[-1]] = 0
@@ -176,6 +172,39 @@ def extend_path(path, mask, thr, last=False):
             break
 
     return path
+
+
+def get_all_paths(hits, thr, preds, module_id, do_save=False, debug_limit: int | None = None):
+    tracks_all = []
+    x4 = True
+    for hit in tqdm(range(len(preds)), desc="reconstruct"):
+        # Limit number of paths for debugging time saving
+        if debug_limit and hit > debug_limit:
+            continue
+
+        mask = np.ones(len(hits))
+        path = get_path2(hit, mask, thr, preds, module_id)
+        if x4 and len(path) > 1:
+            mask[path[1]] = 0
+            path2 = get_path2(hit, mask, thr, preds, module_id)
+            if len(path) < len(path2):
+                path = path2
+                mask[path[1]] = 0
+                path2 = get_path2(hit, mask, thr, preds, module_id)
+                if len(path) < len(path2):
+                    path = path2
+            elif len(path2) > 1:
+                mask[path[1]] = 1
+                mask[path2[1]] = 0
+                path2 = get_path2(hit, mask, thr, preds, module_id)
+                if len(path) < len(path2):
+                    path = path2
+        tracks_all.append(path)
+
+    if do_save:
+        save(tracks_all, name="10_outrunner_tracks", tag=EVENT_NAME, prefix=DIRECTORY, save=True)
+
+    return tracks_all
 
 
 if __name__ == "__main__":
@@ -205,7 +234,7 @@ if __name__ == "__main__":
 
         preds = []
 
-        for i in tqdm_notebook(range(len(features) - 1)):
+        for i in tqdm(range(len(features) - 1)):
             TestX[i + 1 :, :5] = np.tile(features[i], (len(TestX) - i - 1, 1))
 
             pred = model.predict(TestX[i + 1 :], batch_size=20000)[:, 0]  # type: ignore
@@ -241,35 +270,21 @@ if __name__ == "__main__":
     skip_reconstruct = True
 
     if skip_reconstruct == False:
-        tracks_all = []
-        thr = 0.85
-        x4 = True
-        for hit in tqdm_notebook(range(len(preds))):
-            m = np.ones(len(truth))
-            path = get_path2(hit, m, thr)
-            if x4 and len(path) > 1:
-                m[path[1]] = 0
-                path2 = get_path2(hit, m, thr)
-                if len(path) < len(path2):
-                    path = path2
-                    m[path[1]] = 0
-                    path2 = get_path2(hit, m, thr)
-                    if len(path) < len(path2):
-                        path = path2
-                elif len(path2) > 1:
-                    m[path[1]] = 1
-                    m[path2[1]] = 0
-                    path2 = get_path2(hit, m, thr)
-                    if len(path) < len(path2):
-                        path = path2
-            tracks_all.append(path)
-        # np.save('my_tracks_all', tracks_all)
+        tracks_all: list = save(
+            get_all_paths(hits, thr=0.85, preds=preds, module_id=module_id),
+            name="outrunner_tracks_all",
+            tag=EVENT_NAME,
+            prefix=DIRECTORY,
+            save=True,
+        )
     else:
         print("load tracks")
-        tracks_all = np.load(SOLUTION_DIR + "my_tracks_all.npy", allow_pickle=True)
+        tracks_all = find_file(f"outrunner_tracks_all", dir=DIRECTORY, extension="pkl")  # type: ignore
+
+        # tracks_all = np.load(SOLUTION_DIR + "my_tracks_all.npy", allow_pickle=True)
 
     # calculate track's confidence (about 2 mins)
-    scores = get_track_scores(tracks_all, 8)
+    scores = save(get_track_scores(tracks_all, 8), name="outrunner_scores", tag=EVENT_NAME, prefix=DIRECTORY, save=True)
 
     # multistage
     idx = np.argsort(scores)[::-1]
@@ -288,7 +303,7 @@ if __name__ == "__main__":
 
     for track_id in tqdm(range(1, int(tracks.max()) + 1)):
         path = np.where(tracks == track_id)[0]
-        path = extend_path(path.tolist(), 1 * (tracks == 0), 0.6)
+        path = extend_path(path.tolist(), 1 * (tracks == 0), 0.6, preds)
         tracks[path] = track_id
 
     evaluate_tracks(tracks, truth)
@@ -298,7 +313,7 @@ if __name__ == "__main__":
         path = path[np.where(tracks[path] == 0)[0]]
 
         if len(path) > 3:
-            path = extend_path(path.tolist(), 1 * (tracks == 0), 0.6)
+            path = extend_path(path.tolist(), 1 * (tracks == 0), 0.6, preds)
             track_id = track_id + 1
             tracks[path] = track_id
 
@@ -306,7 +321,7 @@ if __name__ == "__main__":
 
     for track_id in tqdm(range(1, int(tracks.max()) + 1)):
         path = np.where(tracks == track_id)[0]
-        path = extend_path(path.tolist(), 1 * (tracks == 0), 0.5)
+        path = extend_path(path.tolist(), 1 * (tracks == 0), 0.5, preds)
         tracks[path] = track_id
 
     evaluate_tracks(tracks, truth)
@@ -316,7 +331,7 @@ if __name__ == "__main__":
         path = path[np.where(tracks[path] == 0)[0]]
 
         if len(path) > 1:
-            path = extend_path(path.tolist(), 1 * (tracks == 0), 0.5)
+            path = extend_path(path.tolist(), 1 * (tracks == 0), 0.5, preds)
         if len(path) > 2:
             track_id = track_id + 1
             tracks[path] = track_id
@@ -326,7 +341,7 @@ if __name__ == "__main__":
     for track_id in tqdm(range(1, int(tracks.max()) + 1)):
         path = np.where(tracks == track_id)[0]
         if len(path) % 2 == 0:
-            path = extend_path(path.tolist(), 1 * (tracks == 0), 0.5, True)
+            path = extend_path(path.tolist(), 1 * (tracks == 0), 0.5, preds=preds, last=True)
             tracks[path] = track_id
 
     evaluate_tracks(tracks, truth)
