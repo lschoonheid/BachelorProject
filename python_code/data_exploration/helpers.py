@@ -10,6 +10,7 @@ from functools import wraps
 from pandas import DataFrame, read_csv
 from trackml.dataset import load_event
 from .constants import CACHE_LOC
+from numpy import load as load_numpy
 
 
 def get_event_names(dir: str) -> list[str]:
@@ -108,14 +109,21 @@ def load_event_cached(
     return load_event(prefix, parts)
 
 
-def _is_pickle(filename: str) -> bool:
+def is_filetype(filename: str, extensions: list[str]) -> bool:
     file_extension = filename.split(".")[-1]
-    return ["pyc", "pkl"].count(file_extension) > 0
+    return extensions.count(file_extension) > 0
+
+
+def _is_pickle(filename: str) -> bool:
+    return is_filetype(filename, ["pyc", "pkl"])
 
 
 def _is_csv(filename: str) -> bool:
-    file_extension = filename.split(".")[-1]
-    return ["csv"].count(file_extension) > 0
+    return is_filetype(filename, ["csv"])
+
+
+def _is_numpy(filename: str) -> bool:
+    return is_filetype(filename, ["npy"])
 
 
 def datetime_str() -> str:
@@ -151,12 +159,19 @@ def save(return_object, name: str | None = None, tag: str | None = None, prefix:
     return return_object
 
 
-def find_file(name: str, dir: str = CACHE_LOC, extension="pkl", fallback_func: Callable | None = None):
+def find_file(
+    name: str, dir: str = CACHE_LOC, extension="pkl", fallback_func: Callable | None = None, force_fallback=False
+):
     """Load a file in `dir` that is similar to `name`."""
+    if force_fallback and fallback_func is not None:
+        return fallback_func()
+
     # Check supported extension
     is_pickle = _is_pickle(extension)
     is_csv = _is_csv(extension)
-    if not (is_pickle or is_csv):
+    is_numpy = _is_numpy(extension)
+    is_supported = any([is_pickle, is_csv, is_numpy])
+    if not is_supported:
         raise ValueError(f"File extension {extension} not supported.")
 
     try:
@@ -174,9 +189,11 @@ def find_file(name: str, dir: str = CACHE_LOC, extension="pkl", fallback_func: C
                     return load_pickle(dir + file)
                 elif _is_csv(file_extension):
                     return read_csv(dir + file)
+                elif _is_numpy(file_extension):
+                    return load_numpy(dir + file, allow_pickle=True)
         raise FileNotFoundError
     except FileNotFoundError:
-        print(f"Could not find file `{name}` in {dir}")
+        print(f"Could not find {extension} file `{name}` in {dir}")
         if fallback_func is not None:
             return fallback_func()
         return None
