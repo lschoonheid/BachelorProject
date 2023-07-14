@@ -25,6 +25,7 @@ DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
 DATA_ROOT = DIRECTORY + "data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 MODELS_ROOT = DIRECTORY + "trained_models/2nd_place/"
+SOLUTION_DIR = MODELS_ROOT + "original_model/"
 prefix = DATA_SAMPLE
 
 
@@ -394,6 +395,7 @@ def retrieve_predict(hit_id: int, preds: list[npt.NDArray]) -> npt.NDArray:
     return p
 
 
+# Checked
 def get_module_id(hits: pd.DataFrame) -> npt.NDArray:
     """Generate list of `module_id` for each hit with hit index as index."""
     # Group by volume_id, layer_id, module_id and count number of hits
@@ -554,6 +556,9 @@ def get_all_paths(
     tracks_all = []
     N = len(preds)
     for index in tqdm(range(N), desc="Generating all paths"):
+        # TODO: remove this
+        if index > 10:
+            continue
         # Shift hit_id -> index + 1 because hit_id starts at 1 and index starts at 0
         hit_id = index + 1
         mask = np.ones(len(hits))
@@ -565,22 +570,31 @@ def get_all_paths(
     return tracks_all
 
 
-def get_track_scores(tracks_all: list[npt.NDArray], factor: int = 8) -> npt.NDArray:
+# Checked
+def get_track_scores(
+    tracks_all: list[npt.NDArray], factor: int = 8, limit: int | None = None, index_shift=1
+) -> npt.NDArray:
     """Generate confidence score for each track."""
     scores = np.zeros(len(tracks_all))
-    for seed_index, path in tqdm(enumerate(tracks_all), total=len(tracks_all), desc="Generating track scores"):
-        n_hits = len(path)
+
+    if limit is not None:
+        track_selection = tracks_all[:limit]
+    else:
+        track_selection = tracks_all
+
+    for seed_index, path_ids in tqdm(enumerate(track_selection), total=len(tracks_all), desc="Generating track scores"):
+        n_hits = len(path_ids)
 
         # Skip paths with only one hit
         if n_hits > 1:
             tp = 0  # number of estimated true positives
             fp = 0  # number of estimated false positives
-            for hit_id in path:
+            for hit_id in path_ids:
                 # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-                hit_index = hit_id - 1
+                hit_index = hit_id - index_shift
                 seed_referenced_path = tracks_all[hit_index]
-                tp = tp + np.sum(np.isin(seed_referenced_path, path, assume_unique=True))
-                fp = fp + np.sum(np.isin(seed_referenced_path, path, assume_unique=True, invert=True))
+                tp = tp + np.sum(np.isin(seed_referenced_path, path_ids, assume_unique=True))
+                fp = fp + np.sum(np.isin(seed_referenced_path, path_ids, assume_unique=True, invert=True))
 
             # Calculate track score
             # TODO: understand this metric
