@@ -1077,26 +1077,42 @@ if __name__ == "__main__":
     )
 
     # Show some tracks
-    n_start = 1000
-    n_total = 10
-    for i in range(n_start, n_start + n_total):
-        # Show tracks
-        # Tracks are already ordered by score
-        track_id = i
-        possible_particle_ids: pd.DataFrame = grouped[grouped["track_id"] == track_id].sort_values(
-            "count_both", ascending=False
-        )
-        most_likely_particle_id = int(possible_particle_ids.iloc[0]["particle_id"])
+    n_per_cycle = 10
+    for n_start in [0, 1000, 2000, 3000, 4000, 5000]:
+        for i in range(n_start, n_start + n_per_cycle):
+            # Show tracks
+            # Tracks are already ordered by score
+            track_id = i
+            possible_particle_ids: pd.DataFrame = grouped[grouped["track_id"] == track_id].sort_values(
+                "count_both", ascending=False
+            )
+            most_likely_particle_id = int(possible_particle_ids.iloc[0]["particle_id"])
 
-        best_reconstructed_track_indices = np.where(merged_tracks == track_id)[0]
-        best_reconstructed_track_ids = best_reconstructed_track_indices + 1
-        seed = best_reconstructed_track_ids[0]
-        reconstructed = combined[combined["track_id"] == track_id]
-        truth = combined[combined["particle_id"] == most_likely_particle_id]
-        print("Selected track ids: \n", best_reconstructed_track_ids)
-        print(reconstructed)
-        fig = plot_prediction(truth, reconstructed, most_likely_particle_id, label_type="particle_id")
-        fig.suptitle(f"Track {track_id} with particle id {most_likely_particle_id}")
+            # Select related truth and reconstructed hits
+            reconstructed_track = combined[combined["track_id"] == track_id]
+            truth_track = combined[combined["particle_id"] == most_likely_particle_id]
 
-        fig.savefig(f"reconstructed_track_{track_id}_{event_name}.png", dpi=300)
-        plt.close()
+            print("Selected track ids: \n", reconstructed_track["hit_id"].values)
+            print(reconstructed_track)
+
+            # Do some weight analysis
+            reconstructed_weight_total = reconstructed_track["weight"].sum()
+            reconstructed_weight_overlap = reconstructed_track[
+                reconstructed_track["particle_id"] == most_likely_particle_id
+            ]["weight"].sum()
+            truth_weight = truth_track["weight"].sum()
+            ratio = reconstructed_weight_overlap / truth_weight
+            print(
+                f"Track {track_id} has total weight {reconstructed_weight_total}, vs {truth_weight} from particle {most_likely_particle_id}, ratio: {ratio:.4f}"
+            )
+
+            # Make figure
+            fig = plot_prediction(truth_track, reconstructed_track, most_likely_particle_id, label_type="particle_id")
+            fig.suptitle(
+                f"Track {track_id} with particle id {most_likely_particle_id} \n\
+                weight ratio: {ratio:.2f}\
+                ",
+                fontsize=20,
+            )
+            fig.savefig(f"reconstructed_track_{track_id}_{event_name}.png", dpi=300)
+            plt.close()
