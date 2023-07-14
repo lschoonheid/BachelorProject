@@ -9,18 +9,13 @@ from keras.models import Model, Sequential, load_model
 from keras.layers import Dense
 from keras.optimizers import Adam
 import tensorflow as tf
-
-# Model = Any
-# Sequential = Any
-# Dense = Any
-# load_model = lambda: None
-# Adam = lambda a: None
-
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 from classes.event import Event
 from data_exploration.helpers import datetime_str, find_file, save, pickle_cache
+from data_exploration.visualize import plot_prediction
 from trackml.score import score_event
 
 # print(os.listdir("../input"))
@@ -629,12 +624,13 @@ def get_track_scores(
 def score_event_fast(submission, truth: pd.DataFrame):
     """Calculate score of a single event based on `truth` information."""
     combined = truth[["hit_id", "particle_id", "weight"]].merge(submission, how="left", on="hit_id")
-    df = combined.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
-    combined = combined.merge(df, how="left", on=["track_id", "particle_id"])
+    grouped = combined.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
+    print(grouped[grouped["track_id"] == 1])
+    combined = combined.merge(grouped, how="left", on=["track_id", "particle_id"])
 
-    df1 = df.groupby(["particle_id"]).count_both.sum().to_frame("count_particle").reset_index()
+    df1 = grouped.groupby(["particle_id"]).count_both.sum().to_frame("count_particle").reset_index()
     combined = combined.merge(df1, how="left", on="particle_id")
-    df1 = df.groupby(["track_id"]).count_both.sum().to_frame("count_track").reset_index()
+    df1 = grouped.groupby(["track_id"]).count_both.sum().to_frame("count_track").reset_index()
     combined = combined.merge(df1, how="left", on="track_id")
     combined.count_both *= 2
     score = combined[
@@ -945,41 +941,6 @@ def test(
     return tracks
 
 
-def plot_prediction(truth, reconstructed, seed: int, tag: str | None = None):
-    # Show tracks
-
-    plot_targets = generate_track_fig()
-    fig = plot_targets[0]
-    axes: tuple[Axes, Axes, Axes, Axes] = plot_targets[1:]  # type: ignore
-
-    # TODO plot adjacent hits, too?
-
-    add_track_to_fig(
-        truth,
-        *axes,
-        particle_id=f"Seed {seed} truth",
-    )
-    add_track_to_fig(
-        reconstructed,
-        *axes,
-        particle_id=f"Seed {seed} reconstructed",
-    )
-
-    # Plot seed hit
-    t_r = reconstructed
-    s_x, s_y, s_z = t_r[t_r["hit_id"] == seed][["tx", "ty", "tz"]].values[0]
-    axes[0].plot([s_x], [s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
-    axes[1].plot([s_x], [s_y], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
-    axes[2].plot([s_x], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
-    axes[3].plot([s_y], [s_z], marker="o", color="red", markersize=15, label="Seed", zorder=0, alpha=0.2)
-
-    for ax in axes:
-        ax.legend()
-
-    tag = "" if tag is None else f"_{tag}"
-    fig.savefig(f"{n_test}_generated_tracks_seed_{seed}{tag}.png", dpi=300)
-
-
 def show_test(
     event: Event,
     module_id,
@@ -1011,9 +972,15 @@ def show_test(
                 # Divide the track into frames
                 frames_total = len(reconstructed)
                 for f in range(frames_total):
-                    plot_prediction(truth, reconstructed[: f + 1], seed, tag=f"f{f+1}:{frames_total}")
+                    tag = f"_f{f+1}:{frames_total}"
+                    fig = plot_prediction(truth, reconstructed[: f + 1], seed, tag=tag)
+                    fig.savefig(f"{n_test}_generated_tracks_seed_{seed}{tag}.png", dpi=300)
+                    plt.close()
+
             else:
-                plot_prediction(truth, reconstructed, seed)
+                fig = plot_prediction(truth, reconstructed, seed)
+                fig.savefig(f"{n_test}_generated_tracks_seed_{seed}.png", dpi=300)
+                plt.close()
 
 
 if __name__ == "__main__":
@@ -1098,3 +1065,38 @@ if __name__ == "__main__":
     # Evaluate submission
     score = score_event(event.truth, submission)
     print("TrackML Score:", score)
+    print("Fast score: ", score_event_fast(submission, event.truth))
+
+    # Add our track_id to truth
+    combined: pd.DataFrame = event.truth[["hit_id", "particle_id", "weight", "tx", "ty", "tz"]].merge(
+        submission, how="left", on="hit_id"
+    )
+    # Group by unique combinations of track_id (our) and particle_id (truth); count number of hits overlapping
+    grouped: pd.DataFrame = (
+        combined.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
+    )
+
+    # Show some tracks
+    n_start = 1000
+    n_total = 10
+    for i in range(n_start, n_start + n_total):
+        # Show tracks
+        # Tracks are already ordered by score
+        track_id = i
+        possible_particle_ids: pd.DataFrame = grouped[grouped["track_id"] == track_id].sort_values(
+            "count_both", ascending=False
+        )
+        most_likely_particle_id = int(possible_particle_ids.iloc[0]["particle_id"])
+
+        best_reconstructed_track_indices = np.where(merged_tracks == track_id)[0]
+        best_reconstructed_track_ids = best_reconstructed_track_indices + 1
+        seed = best_reconstructed_track_ids[0]
+        reconstructed = combined[combined["track_id"] == track_id]
+        truth = combined[combined["particle_id"] == most_likely_particle_id]
+        print("Selected track ids: \n", best_reconstructed_track_ids)
+        print(reconstructed)
+        fig = plot_prediction(truth, reconstructed, most_likely_particle_id, label_type="particle_id")
+        fig.suptitle(f"Track {track_id} with particle id {most_likely_particle_id}")
+
+        fig.savefig(f"reconstructed_track_{track_id}_{event_name}.png", dpi=300)
+        plt.close()

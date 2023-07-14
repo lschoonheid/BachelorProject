@@ -462,3 +462,48 @@ def visualize_event(
 
     if do_versus_scatter:
         do_cell_vs_tp(event_kv)
+
+
+def plot_prediction(
+    truth: DataFrame,
+    reconstructed: DataFrame,
+    label: int,
+    label_type="Seed",
+    data_table="truth",
+    tag: str | None = None,
+):
+    """Plot the prediction of a single seed"""
+    # Show tracks
+
+    plot_targets = generate_track_fig()
+    fig = plot_targets[0]
+    axes: tuple[Axes, Axes, Axes, Axes] = plot_targets[1:]  # type: ignore
+
+    # TODO plot adjacent hits, too?
+
+    add_track_to_fig(
+        truth,
+        *axes,
+        particle_id=f"{label_type} {label} truth",
+        type=data_table,
+    )
+    add_track_to_fig(
+        reconstructed,
+        *axes,
+        particle_id=f"{label_type} {label} reconstructed",
+        type=data_table,
+    )
+
+    if label_type.lower() == "seed":
+        # Plot seed hit
+        t_r = reconstructed
+        s_x, s_y, s_z = t_r[t_r["hit_id"] == label][["tx", "ty", "tz"]].values[0]
+        axes[0].plot([s_x], [s_y], [s_z], marker="o", color="red", markersize=15, label=label_type, zorder=0, alpha=0.2)
+        axes[1].plot([s_x], [s_y], marker="o", color="red", markersize=15, label=label_type, zorder=0, alpha=0.2)
+        axes[2].plot([s_x], [s_z], marker="o", color="red", markersize=15, label=label_type, zorder=0, alpha=0.2)
+        axes[3].plot([s_y], [s_z], marker="o", color="red", markersize=15, label=label_type, zorder=0, alpha=0.2)
+
+    for ax in axes:
+        ax.legend()
+
+    return fig
