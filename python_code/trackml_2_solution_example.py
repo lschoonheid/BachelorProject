@@ -1,15 +1,22 @@
+from typing import Any
 import random
 from matplotlib.axes import Axes
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+
 from keras.models import Model, Sequential, load_model
 from keras.layers import Dense
 from keras.optimizers import Adam
-import datetime
 import tensorflow as tf
+
+# Model = Any
+# Sequential = Any
+# Dense = Any
+# load_model = lambda: None
+# Adam = lambda a: None
+
 from tqdm import tqdm
-from typing import Any
 
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 from classes.event import Event
@@ -299,7 +306,6 @@ def make_predict(
     features: npt.NDArray, hits: pd.DataFrame, hit_id: int, thr=0.5, batch_size: int | None = None
 ) -> npt.NDArray:
     """Predict probability of each pair of hits with the last hit in the path. Generates a prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id."""
-    # TODO why is len of truth taken and not hits? They should be equal
     Tx = np.zeros((len(hits), 10))
     # Set first five columns of Tx to be the features of the hit with hit_id
     # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
@@ -319,7 +325,7 @@ def make_predict(
     idx = np.where(pred > thr)[0]
 
     # Filter Tx on predictions above threshold and swap first and last five columns
-    # TODO: why is this done? Is this TTA?
+    # TTA
     Tx2 = np.zeros((len(idx), 10))
     Tx2[:, 5:] = Tx[idx, :5]
     Tx2[:, :5] = Tx[idx, 5:]
@@ -381,6 +387,7 @@ def make_predict_matrix(
     return preds
 
 
+# Checked
 def retrieve_predict(hit_id: int, preds: list[npt.NDArray]) -> npt.NDArray:
     """Generate prediction array of length len(truth) with the probability of each hit belonging to the same track as `hit_id`, by taking the prediction from the prediction matrix `preds`."""
     p = np.zeros(len(preds))
@@ -416,6 +423,7 @@ def get_module_id(hits: pd.DataFrame) -> npt.NDArray:
     return module_id
 
 
+# Checked
 def mask_same_module(
     mask: npt.NDArray, path_ids: npt.NDArray | list[int], p: npt.NDArray, thr: float, module_id: npt.NDArray
 ) -> npt.NDArray:
@@ -469,7 +477,8 @@ def get_path(
         mask[path_indices[-1]] = 0
 
         if skip_same_module:
-            mask = mask_same_module(mask, path_indices, p, thr, module_id)
+            path_ids = np.array(path_indices) + 1
+            mask = mask_same_module(mask, path_ids, p, thr, module_id)
 
         # `a` is the culuminative probability between each hit in the path
         # At each step we look at the best candidate for the whole (previously geberate) track
@@ -549,16 +558,23 @@ def redraw(
     return path_ids
 
 
+# Checked
 def get_all_paths(
-    hits: pd.DataFrame, thr: float, module_id: npt.NDArray, preds: list[npt.NDArray], do_redraw: bool = True
+    hits: pd.DataFrame,
+    thr: float,
+    module_id: npt.NDArray,
+    preds: list[npt.NDArray],
+    do_redraw: bool = True,
+    debug_limit: None | int = None,
 ) -> list[npt.NDArray]:
     """Generate all paths for all hits in the event as seeds. Returns list of hit_ids per seed."""
     tracks_all = []
     N = len(preds)
     for index in tqdm(range(N), desc="Generating all paths"):
-        # TODO: remove this
-        if index > 10:
+        # Limit number of paths for debugging time saving
+        if debug_limit and index > debug_limit:
             continue
+
         # Shift hit_id -> index + 1 because hit_id starts at 1 and index starts at 0
         hit_id = index + 1
         mask = np.ones(len(hits))
@@ -709,7 +725,7 @@ def extend_path(
     return path_ids
 
 
-def get_leftovers(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
+def get_leftovers(hit_index: int, tracks_all: list[npt.NDArray], merged_tracks: npt.NDArray) -> npt.NDArray:
     """Get path from `hit_index` seed and select hits from that path that have not been assigned to a (merged) track yet."""
     path = np.array(tracks_all[hit_index])
     path_indices = path - 1
@@ -720,6 +736,7 @@ def get_leftovers(hit_index, tracks_all, merged_tracks) -> npt.NDArray:
 
 
 def merge_tracks(
+    tracks_all: list[npt.NDArray],
     thr: int,
     ordered_by_score: npt.NDArray | None = None,
     scores: npt.NDArray | None = None,
@@ -742,7 +759,7 @@ def merge_tracks(
         ordered_by_score = np.argsort(scores)[::-1]
 
     if merged_tracks is None:
-        merged_tracks = np.zeros(len(hits))
+        merged_tracks = np.zeros(len(ordered_by_score))
 
     # When debugging, start with seed index 0 for easier evaluation of path
     if debug:
@@ -796,9 +813,11 @@ def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False, las
 
 # TODO: add comments
 def run_merging(
+    tracks_all: list[npt.NDArray],
     scores: npt.NDArray,
     preds: list[npt.NDArray],
     multi_stage=True,
+    module_id: npt.NDArray = None,
     log_evaluations=True,
     truth: pd.DataFrame | None = None,
 ):
@@ -810,19 +829,22 @@ def run_merging(
     ordered_by_score = np.argsort(scores)[::-1]
 
     if not multi_stage:
-        merged_tracks, _ = merge_tracks(thr=3, ordered_by_score=ordered_by_score)
+        merged_tracks, _ = merge_tracks(tracks_all=tracks_all, thr=3, ordered_by_score=ordered_by_score)
         evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
         return merged_tracks
 
     # multistage
     max_track_id = 0
-    merged_tracks, max_track_id = merge_tracks(thr=6, ordered_by_score=ordered_by_score, max_track_id=max_track_id)
+    merged_tracks, max_track_id = merge_tracks(
+        tracks_all=tracks_all, thr=6, ordered_by_score=ordered_by_score, max_track_id=max_track_id
+    )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     merged_tracks = extend_tracks(merged_tracks, thr=0.6, module_id=module_id, preds=preds)
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     merged_tracks, max_track_id = merge_tracks(
+        tracks_all=tracks_all,
         thr=3,
         ordered_by_score=ordered_by_score,
         merged_tracks=merged_tracks,
@@ -839,6 +861,7 @@ def run_merging(
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     merged_tracks, max_track_id = merge_tracks(
+        tracks_all=tracks_all,
         thr=2,
         ordered_by_score=ordered_by_score,
         merged_tracks=merged_tracks,
@@ -1028,15 +1051,11 @@ if __name__ == "__main__":
     _make_predict = lambda: save(
         make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY, save=do_export
     )
-    if preload:
-        preds: list[npt.NDArray] = find_file(
-            f"preds_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_predict()
-        )  # type: ignore
-    else:
-        preds: list[npt.NDArray] = _make_predict()
+    preds: list[npt.NDArray] = find_file(f"preds_{event_name}", dir=DIRECTORY, fallback_func=_make_predict, force_fallback=not preload)  # type: ignore
 
     # Generate tracks for each hit as seed
     thr: float = 0.85
+
     _make_tracks = lambda: save(
         get_all_paths(hits, thr, module_id, preds, do_redraw=True),
         name="tracks_all",
@@ -1044,34 +1063,25 @@ if __name__ == "__main__":
         prefix=DIRECTORY,
         save=do_export,
     )
-    if preload:
-        tracks_all: list[npt.NDArray] = find_file(f"tracks_all_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_tracks())  # type: ignore
-    else:
-        tracks_all: list[npt.NDArray] = _make_tracks()
+    tracks_all: list[npt.NDArray] = find_file(f"tracks_all_{event_name}", dir=DIRECTORY, fallback_func=_make_tracks, force_fallback=not preload)  # type: ignore
 
     # calculate track's confidence
     _make_scores = lambda: save(
         get_track_scores(tracks_all), name="scores", tag=event_name, prefix=DIRECTORY, save=do_export
     )
-    if preload:
-        scores: npt.NDArray = find_file(f"scores_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_scores())  # type: ignore
-    else:
-        scores: npt.NDArray = _make_scores()
+    scores: npt.NDArray = find_file(f"scores_{event_name}", dir=DIRECTORY, fallback_func=_make_scores, force_fallback=not preload)  # type: ignore
 
     # Merge tracks
-    _make_tracks = lambda: save(
-        run_merging(scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth),
+    _make_merged_tracks = lambda: save(
+        run_merging(tracks_all, scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth),
         name="merged_tracks",
         tag=event_name,
         prefix=DIRECTORY,
         save=do_export,
     )  # type: ignore
-    if preload:
-        merged_tracks: npt.NDArray = find_file(
-            f"merged_tracks_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_tracks()
-        )  # type: ignore
-    else:
-        merged_tracks: npt.NDArray = _make_tracks()
+    merged_tracks: npt.NDArray = find_file(
+        f"merged_tracks_{event_name}", dir=DIRECTORY, fallback_func=_make_merged_tracks, force_fallback=not preload
+    )  # type: ignore
 
     # Save submission
     _make_submission = lambda: save(
@@ -1081,12 +1091,9 @@ if __name__ == "__main__":
         prefix=DIRECTORY,
         save=do_export,
     )
-    if preload:
-        submission: pd.DataFrame = find_file(
-            f"submission_{event_name}", dir=DIRECTORY, fallback_func=lambda: _make_submission()
-        )  # type: ignore
-    else:
-        submission: pd.DataFrame = _make_submission()
+    submission: pd.DataFrame = find_file(
+        f"submission_{event_name}", dir=DIRECTORY, fallback_func=_make_submission, force_fallback=not preload
+    )  # type: ignore
 
     # Evaluate submission
     score = score_event(event.truth, submission)
