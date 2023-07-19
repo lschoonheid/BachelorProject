@@ -5,6 +5,8 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+import os
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from keras.models import Model, Sequential, load_model
 from keras.layers import Dense
 from keras.optimizers import Adam
@@ -298,7 +300,7 @@ def run_training(
 
 
 def make_predict(
-    features: npt.NDArray, hits: pd.DataFrame, hit_id: int, thr=0.5, batch_size: int | None = None
+    model: Model, features: npt.NDArray, hits: pd.DataFrame, hit_id: int, thr=0.85, batch_size: int | None = None
 ) -> npt.NDArray:
     """Predict probability of each pair of hits with the last hit in the path. Generates a prediction array of length len(truth) with the probability of each hit belonging to the same track as hit_id."""
     Tx = np.zeros((len(hits), 10))
@@ -340,7 +342,9 @@ def make_predict_matrix(
     features: npt.NDArray,
     thr_0=0.2,
     thr_1=0.5,
+    batch_size=2000,
     verbosity: str = "0",
+    debug_limit: None | int = None,
 ) -> list[npt.NDArray]:
     TestX = np.zeros((len(features), 10))
     TestX[:, 5:] = features
@@ -352,15 +356,19 @@ def make_predict_matrix(
     preds = []
 
     for index in tqdm(range(len(features) - 1), desc="Generating prediction matrix"):
+        # Limit number of predicts for debugging time saving
+        if debug_limit and index > debug_limit:
+            continue
+
         TestX[index + 1 :, :5] = np.tile(features[index], (len(TestX) - index - 1, 1))
 
-        pred = model.predict(TestX[index + 1 :], batch_size=20000, verbose=verbosity)[:, 0]
+        pred = model.predict(TestX[index + 1 :], batch_size=batch_size, verbose=verbosity)[:, 0]
         # Filter predictions above threshold
         idx = np.where(pred > thr_0)[0]
 
         if len(idx) > 0:
             TestX1[idx + index + 1, 5:] = TestX[idx + index + 1, :5]
-            pred1 = model.predict(TestX1[idx + index + 1], batch_size=20000, verbose=verbosity)[:, 0]
+            pred1 = model.predict(TestX1[idx + index + 1], batch_size=batch_size, verbose=verbosity)[:, 0]
             pred[idx] = (pred[idx] + pred1) / 2
 
         idx = np.where(pred > thr_1)[0]
@@ -434,6 +442,7 @@ def mask_same_module(
     return mask
 
 
+# Checked
 def get_path(
     hit_id: int,
     thr: float,
@@ -443,6 +452,7 @@ def get_path(
     preds: list[npt.NDArray] | None = None,
     features: npt.NDArray | None = None,
     hits: pd.DataFrame | None = None,
+    model: Model | None = None,
 ):
     """Predict set of hits that belong to the same track as hit_id.
     Returns list[hit_id].
@@ -461,10 +471,10 @@ def get_path(
         if preds is not None:
             p = retrieve_predict(hit_id_last, preds)
         else:
-            if features is None or hits is None:
+            if features is None or hits is None or model is None:
                 raise ValueError("Either preds or features and truth must be provided")
 
-            p = make_predict(features, hits, hit_id_last, thr / 2)
+            p = make_predict(model=model, features=features, hits=hits, hit_id=hit_id_last, thr=thr)
 
         # Generate mask of hits that have a probability above the threshold
         mask = (p > thr) * mask
@@ -1040,7 +1050,9 @@ if __name__ == "__main__":
 
     # Merge tracks
     _make_merged_tracks = lambda: save(
-        run_merging(tracks_all, scores, preds, multi_stage=True, log_evaluations=True, truth=event.truth),
+        run_merging(
+            tracks_all, scores, preds, multi_stage=True, module_id=module_id, log_evaluations=True, truth=event.truth
+        ),
         name="merged_tracks",
         tag=event_name,
         prefix=DIRECTORY,

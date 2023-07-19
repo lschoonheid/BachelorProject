@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import os
 
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+from keras.models import load_model
+
 from tqdm import tqdm
 from data_exploration.helpers import pickle_cache, save, find_file
 
@@ -44,10 +47,56 @@ def get_path(hit, mask, thr):
     return path
 
 
-def get_predict(hit, thr=0.5):
-    Tx = np.zeros((len(truth), 10))
+def make_predict_matrix(model, features, debug_limit: int | None = None):
+    # Predict all pairs for reconstruct by all hits. (takes 2.5hr but can skip)
+
+    TestX = np.zeros((len(features), 10))
+    TestX[:, 5:] = features
+
+    # for TTA
+    TestX1 = np.zeros((len(features), 10))
+    TestX1[:, :5] = features
+
+    preds = []
+
+    for i in tqdm(range(len(features) - 1)):
+        # Limit number of predicts for debugging time saving
+        if debug_limit and i > debug_limit:
+            continue
+
+        TestX[i + 1 :, :5] = np.tile(features[i], (len(TestX) - i - 1, 1))
+
+        pred = model.predict(TestX[i + 1 :], batch_size=20000)[:, 0]
+        idx = np.where(pred > 0.2)[0]
+
+        if len(idx) > 0:
+            TestX1[idx + i + 1, 5:] = TestX[idx + i + 1, :5]
+            pred1 = model.predict(TestX1[idx + i + 1], batch_size=20000)[:, 0]
+            pred[idx] = (pred[idx] + pred1) / 2
+
+        idx = np.where(pred > 0.5)[0]
+
+        preds.append([idx + i + 1, pred[idx]])
+
+        # if i==0: print(preds[-1])
+
+    preds.append([np.array([], dtype="int64"), np.array([], dtype="float32")])
+
+    # rebuild to NxN
+    for i in range(len(preds)):
+        ii = len(preds) - i - 1
+        for j in range(len(preds[ii][0])):
+            jj = preds[ii][0][j]
+            preds[jj][0] = np.insert(preds[jj][0], 0, ii)
+            preds[jj][1] = np.insert(preds[jj][1], 0, preds[ii][1][j])
+
+    # np.save('my_%s.npy'%event, preds)
+
+
+def get_predict(hit_index: int, model, features: pd.DataFrame, hits: pd.DataFrame, thr=0.5):
+    Tx = np.zeros((len(hits), 10))
     Tx[:, 5:] = features
-    Tx[:, :5] = np.tile(features[hit], (len(Tx), 1))
+    Tx[:, :5] = np.tile(features[hit_index], (len(Tx), 1))
     pred = model.predict(Tx, batch_size=len(Tx))[:, 0]  # type: ignore
     # TTA
     idx = np.where(pred > thr)[0]
@@ -222,7 +271,9 @@ if __name__ == "__main__":
         module_id[si : si + count[i]] = i
 
     # Predict all pairs for reconstruct by all hits. (takes 2.5hr but can skip)
-    skip_predict = True
+    model = load_model(SOLUTION_DIR + "my_model.h5")
+
+    skip_predict = False
 
     if skip_predict == False:
         TestX = np.zeros((len(features), 10))
@@ -237,12 +288,12 @@ if __name__ == "__main__":
         for i in tqdm(range(len(features) - 1)):
             TestX[i + 1 :, :5] = np.tile(features[i], (len(TestX) - i - 1, 1))
 
-            pred = model.predict(TestX[i + 1 :], batch_size=20000)[:, 0]  # type: ignore
+            pred = model.predict(TestX[i + 1 :], batch_size=2000)[:, 0]  # type: ignore
             idx = np.where(pred > 0.2)[0]
 
             if len(idx) > 0:
                 TestX1[idx + i + 1, 5:] = TestX[idx + i + 1, :5]
-                pred1 = model.predict(TestX1[idx + i + 1], batch_size=20000)[:, 0]  # type: ignore
+                pred1 = model.predict(TestX1[idx + i + 1], batch_size=2000)[:, 0]  # type: ignore
                 pred[idx] = (pred[idx] + pred1) / 2
 
             idx = np.where(pred > 0.5)[0]
