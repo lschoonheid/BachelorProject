@@ -9,7 +9,6 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-import os
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from keras.models import Model, Sequential, load_model
 from keras.layers import Dense
@@ -21,12 +20,8 @@ from tqdm import tqdm
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 from classes.event import Event
 from data_exploration.helpers import datetime_str, find_file, save, pickle_cache
-from data_exploration.visualize import plot_prediction
+from data_exploration.visualize import plot_prediction, efficiency
 from trackml.score import score_event
-
-# print(os.listdir("../input"))
-# print(os.listdir("../input/trackml/"))
-# prefix='../input/trackml-particle-identification/'
 
 
 DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
@@ -37,10 +32,10 @@ SOLUTION_DIR = MODELS_ROOT + "original_model/"
 PREFIX = DATA_SAMPLE
 
 
-def setup_custom_logger(name="logger", dir=DIRECTORY):
+def setup_custom_logger(name="logger", dir=DIRECTORY, tag="") -> logging.Logger:
     formatter = logging.Formatter(fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    handler = logging.FileHandler(dir + f"log_{datetime_str()}.txt", mode="w")
-    print(f"Saving log to `{dir}log_{datetime_str()}.txt`")
+    handler = logging.FileHandler(dir + f"log_{tag}_{datetime_str()}.txt", mode="w")
+    print(f"Saving log to `{dir}log_{tag}_{datetime_str()}.txt`")
     handler.setFormatter(formatter)
     screen_handler = logging.StreamHandler(stream=sys.stdout)
     screen_handler.setFormatter(formatter)
@@ -51,7 +46,7 @@ def setup_custom_logger(name="logger", dir=DIRECTORY):
     return logger
 
 
-LOGGER = setup_custom_logger()
+LOGGER: logging.Logger = None  # type: ignore
 
 
 # Hyperparameters
