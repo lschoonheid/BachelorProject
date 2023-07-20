@@ -136,7 +136,7 @@ def get_train_0(size: int, n: int, truth: pd.DataFrame, features: npt.NDArray) -
 
 def get_train(event_range: range = EVENT_RANGE) -> npt.NDArray:
     Train = np.array([])
-    for i in tqdm(event_range):
+    for i in tqdm(event_range, file=sys.stdout):
         event_name = "event0000010%02d" % i
         event = get_featured_event(event_name)
         hits, truth = event.hits, event.truth
@@ -222,7 +222,7 @@ def do_train(
 def get_hard_negatives(model: Model, event_range: range = EVENT_RANGE):
     """Get hard negative feature set for training."""
     Train_hard = []
-    for i in tqdm(event_range):
+    for i in tqdm(event_range, file=sys.stdout):
         # Load event
         event_name = "event0000010%02d" % i
         event = get_featured_event(event_name)
@@ -248,6 +248,7 @@ def get_hard_negatives(model: Model, event_range: range = EVENT_RANGE):
     return Train_hard
 
 
+# TODO: rename
 def _get_log_dir() -> str:
     return DIRECTORY + "training_logs/2nd_place_example/fit/" + datetime_str()
 
@@ -376,7 +377,7 @@ def make_predict_matrix(
 
     preds = []
 
-    for index in tqdm(range(len(features) - 1), desc="Generating prediction matrix"):
+    for index in tqdm(range(len(features) - 1), desc="Generating prediction matrix", file=sys.stdout):
         # Limit number of predicts for debugging time saving
         if debug_limit and index > debug_limit:
             continue
@@ -596,7 +597,7 @@ def get_all_paths(
     """Generate all paths for all hits in the event as seeds. Returns list of hit_ids per seed."""
     tracks_all = []
     N = len(preds)
-    for index in tqdm(range(N), desc="Generating all paths"):
+    for index in tqdm(range(N), desc="Generating all paths", file=sys.stdout):
         # Limit number of paths for debugging time saving
         if debug_limit and index > debug_limit:
             continue
@@ -624,7 +625,9 @@ def get_track_scores(
     else:
         track_selection = tracks_all
 
-    for seed_index, path_ids in tqdm(enumerate(track_selection), total=len(tracks_all), desc="Generating track scores"):
+    for seed_index, path_ids in tqdm(
+        enumerate(track_selection), total=len(tracks_all), desc="Generating track scores", file=sys.stdout
+    ):
         n_hits = len(path_ids)
 
         # Skip paths with only one hit
@@ -1043,6 +1046,7 @@ def run(
     verbose=True,
     **kwargs,
 ):
+    LOGGER = setup_custom_logger(tag=event_name)
     LOGGER.info("Start")
     LOGGER.info(f"Vars: { locals()}")
 
