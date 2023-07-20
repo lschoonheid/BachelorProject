@@ -1,3 +1,7 @@
+import argparse
+import logging
+import os
+import sys
 from typing import Any
 import random
 from matplotlib.axes import Axes
@@ -30,7 +34,24 @@ DATA_ROOT = DIRECTORY + "data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 MODELS_ROOT = DIRECTORY + "trained_models/2nd_place/"
 SOLUTION_DIR = MODELS_ROOT + "original_model/"
-prefix = DATA_SAMPLE
+PREFIX = DATA_SAMPLE
+
+
+def setup_custom_logger(name="logger", dir=DIRECTORY):
+    formatter = logging.Formatter(fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    handler = logging.FileHandler(dir + f"log_{datetime_str()}.txt", mode="w")
+    print(f"Saving log to `{dir}log_{datetime_str()}.txt`")
+    handler.setFormatter(formatter)
+    screen_handler = logging.StreamHandler(stream=sys.stdout)
+    screen_handler.setFormatter(formatter)
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    logger.addHandler(screen_handler)
+    return logger
+
+
+LOGGER = setup_custom_logger()
 
 
 # Hyperparameters
@@ -663,7 +684,7 @@ def evaluate_tracks(tracks: npt.NDArray, truth: pd.DataFrame):
     submission = pd.DataFrame({"hit_id": truth.hit_id, "track_id": tracks})
     score = score_event_fast(submission, truth)[0]
     tracks_count = tracks.max()
-    print(
+    LOGGER.info(
         "event score: %.4f | hits per track: %2.2f | #tracks: %4d | #noise %5d | weight missed %.4f | weight of unassigned %.4f"
         % (
             score,
@@ -772,7 +793,7 @@ def merge_tracks(
         ordered_by_score = [i for i in range(len(merged_tracks))]  # type: ignore
 
     # Merge tracks by confidence
-    for hit_index in tqdm(ordered_by_score, desc="Assigning track id's"):
+    for hit_index in tqdm(ordered_by_score, desc="Assigning track id's", file=sys.stdout):
         # Get path from `hit_index` seed, filtered on hits that have not been assigned to a (merged) track yet
         leftovers_ids = get_leftovers(hit_index, tracks_all, merged_tracks)
 
@@ -789,7 +810,7 @@ def merge_tracks(
 
     # Print number of tracks
     if verbose:
-        print("Number of tracks:", max_track_id)
+        LOGGER.info(f"Number of tracks: { max_track_id}")
 
     return merged_tracks, max_track_id
 
@@ -797,13 +818,13 @@ def merge_tracks(
 # TODO: add comments
 def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False, last=False):
     # Go over all previously assigned tracks
-    for track_id in tqdm(range(1, int(merged_tracks.max()) + 1), "Extending tracks"):
+    for track_id in tqdm(range(1, int(merged_tracks.max()) + 1), "Extending tracks", file=sys.stdout):
         # Select hits that belong to current track id
         # Add 1 because track_id starts at 1 and index starts at 0
         path_ids = np.where(merged_tracks == track_id)[0] + 1
 
         if len(path_ids) == 0:
-            print("Track", track_id, "has no hits")
+            LOGGER.info(f"Track {track_id} has no hits")
             continue
 
         if check_modulus and len(path_ids) % 2 != 0:
@@ -993,31 +1014,48 @@ def show_test(
                 plt.close()
 
 
-if __name__ == "__main__":
-    new_model = False
-    do_export = True
-    preload = True
-    do_test: bool = False
-    repeats = 20
-    n_test = 1
-    pick_random = False
-    animate = False
-    print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
-    print(tf.config.list_physical_devices("GPU"))
-
+def get_model(
+    preload=False, save=True, dir=MODELS_ROOT, inname="original_model/my_model_h.h5", outname: str | None = None
+) -> Model:
     # Get model
-    if new_model:
+    if not preload:
         model = run_training()
-        if do_export:
-            model.save(MODELS_ROOT + f"/new_{datetime_str()}.h5")
+        if save:
+            outname = f"/new_{datetime_str()}.h5" if outname is None else outname
+            model.save(dir + f"/new_{datetime_str()}.h5")
     else:
-        model = load_model(MODELS_ROOT + "original_model/my_model.h5")
+        model = load_model(dir + inname)
+    return model
+
+
+def run(
+    event_name: str = "event000001001",
+    new_model=False,
+    preload=True,
+    do_export=True,
+    batch_size=20000,
+    do_test: bool = False,
+    repeats=20,
+    n_test=1,
+    pick_random=False,
+    animate=False,
+    dir=DIRECTORY,
+    verbose=True,
+    **kwargs,
+):
+    LOGGER.info("Start")
+    LOGGER.info(f"Vars: { locals()}")
+
+    LOGGER.info(f"Num GPUs Available: { len(tf.config.list_physical_devices('GPU'))}")
+    LOGGER.info(tf.config.list_physical_devices("GPU"))
 
     # Load event and extract required data for prediction
-    event_name: str = "event000001001"
     event = get_featured_event(event_name)
     hits = event.hits
     module_id = get_module_id(hits)
+
+    model = get_model(preload=not new_model, save=do_export)
+    LOGGER.info("Model loaded")
 
     if do_test:
         # Test model, output some visualized tracks
@@ -1029,6 +1067,7 @@ if __name__ == "__main__":
         make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY, save=do_export
     )
     preds: list[npt.NDArray] = find_file(f"preds_{event_name}", dir=DIRECTORY, fallback_func=_make_predict, force_fallback=not preload)  # type: ignore
+    LOGGER.info("Predictions loaded")
 
     # Generate tracks for each hit as seed
     thr: float = 0.85
@@ -1041,12 +1080,14 @@ if __name__ == "__main__":
         save=do_export,
     )
     tracks_all: list[npt.NDArray] = find_file(f"tracks_all_{event_name}", dir=DIRECTORY, fallback_func=_make_tracks, force_fallback=not preload)  # type: ignore
+    LOGGER.info("Tracks loaded")
 
     # calculate track's confidence
     _make_scores = lambda: save(
         get_track_scores(tracks_all), name="scores", tag=event_name, prefix=DIRECTORY, save=do_export
     )
     scores: npt.NDArray = find_file(f"scores_{event_name}", dir=DIRECTORY, fallback_func=_make_scores, force_fallback=not preload)  # type: ignore
+    LOGGER.info("Scores loaded")
 
     # Merge tracks
     _make_merged_tracks = lambda: save(
@@ -1061,6 +1102,7 @@ if __name__ == "__main__":
     merged_tracks: npt.NDArray = find_file(
         f"merged_tracks_{event_name}", dir=DIRECTORY, fallback_func=_make_merged_tracks, force_fallback=not preload
     )  # type: ignore
+    LOGGER.info("Merged tracks loaded")
 
     # Save submission
     _make_submission = lambda: save(
@@ -1073,58 +1115,76 @@ if __name__ == "__main__":
     submission: pd.DataFrame = find_file(
         f"submission_{event_name}", dir=DIRECTORY, fallback_func=_make_submission, force_fallback=not preload
     )  # type: ignore
+    LOGGER.info("Submission loaded")
 
     # Evaluate submission
     score = score_event(event.truth, submission)
-    print("TrackML Score:", score)
-    print("Fast score: ", score_event_fast(submission, event.truth))
+    LOGGER.info(f"TrackML Score:{ score}")
+    LOGGER.info(f"Fast score: {score_event_fast(submission, event.truth)}")
 
-    # Add our track_id to truth
-    combined: pd.DataFrame = event.truth[["hit_id", "particle_id", "weight", "tx", "ty", "tz"]].merge(
-        submission, how="left", on="hit_id"
-    )
-    # Group by unique combinations of track_id (our) and particle_id (truth); count number of hits overlapping
-    grouped: pd.DataFrame = (
-        combined.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
-    )
+    if do_test:
+        # Add our track_id to truth
+        combined: pd.DataFrame = event.truth[["hit_id", "particle_id", "weight", "tx", "ty", "tz"]].merge(
+            submission, how="left", on="hit_id"
+        )
+        # Group by unique combinations of track_id (our) and particle_id (truth); count number of hits overlapping
+        grouped: pd.DataFrame = (
+            combined.groupby(["track_id", "particle_id"]).hit_id.count().to_frame("count_both").reset_index()
+        )
 
-    # Show some tracks
-    n_per_cycle = 10
-    for n_start in [0, 1000, 2000, 3000, 4000, 5000]:
-        for i in range(n_start, n_start + n_per_cycle):
-            # Show tracks
-            # Tracks are already ordered by score
-            track_id = i
-            possible_particle_ids: pd.DataFrame = grouped[grouped["track_id"] == track_id].sort_values(
-                "count_both", ascending=False
-            )
-            most_likely_particle_id = int(possible_particle_ids.iloc[0]["particle_id"])
+        # Show some tracks
+        n_per_cycle = 10
+        for n_start in [0, 1000, 2000, 3000, 4000, 5000]:
+            for i in range(n_start, n_start + n_per_cycle):
+                # Show tracks
+                # Tracks are already ordered by score
+                track_id = i
+                possible_particle_ids: pd.DataFrame = grouped[grouped["track_id"] == track_id].sort_values(
+                    "count_both", ascending=False
+                )
+                most_likely_particle_id = int(possible_particle_ids.iloc[0]["particle_id"])
 
-            # Select related truth and reconstructed hits
-            reconstructed_track = combined[combined["track_id"] == track_id]
-            truth_track = combined[combined["particle_id"] == most_likely_particle_id]
+                # Select related truth and reconstructed hits
+                reconstructed_track = combined[combined["track_id"] == track_id]
+                truth_track = combined[combined["particle_id"] == most_likely_particle_id]
 
-            print("Selected track ids: \n", reconstructed_track["hit_id"].values)
-            print(reconstructed_track)
+                track_ids = reconstructed_track["hit_id"].values
+                LOGGER.info(f"Selected track ids: \n {track_ids }")
+                LOGGER.info(reconstructed_track)
 
-            # Do some weight analysis
-            reconstructed_weight_total = reconstructed_track["weight"].sum()
-            reconstructed_weight_overlap = reconstructed_track[
-                reconstructed_track["particle_id"] == most_likely_particle_id
-            ]["weight"].sum()
-            truth_weight = truth_track["weight"].sum()
-            ratio = reconstructed_weight_overlap / truth_weight
-            print(
-                f"Track {track_id} has total weight {reconstructed_weight_total}, vs {truth_weight} from particle {most_likely_particle_id}, ratio: {ratio:.4f}"
-            )
+                # Do some weight analysis
+                reconstructed_weight_total = reconstructed_track["weight"].sum()
+                reconstructed_weight_overlap = reconstructed_track[
+                    reconstructed_track["particle_id"] == most_likely_particle_id
+                ]["weight"].sum()
+                truth_weight = truth_track["weight"].sum()
+                ratio = reconstructed_weight_overlap / truth_weight
+                LOGGER.info(
+                    f"Track {track_id} has total weight {reconstructed_weight_total}, vs {truth_weight} from particle {most_likely_particle_id}, ratio: {ratio:.4f}"
+                )
 
-            # Make figure
-            fig = plot_prediction(truth_track, reconstructed_track, most_likely_particle_id, label_type="particle_id")
-            fig.suptitle(
-                f"Track {track_id} with particle id {most_likely_particle_id} \n\
-                weight ratio: {ratio:.2f}\
-                ",
-                fontsize=20,
-            )
-            fig.savefig(f"reconstructed_track_{track_id}_{event_name}.png", dpi=300)
-            plt.close()
+                # Make figure
+                fig = plot_prediction(
+                    truth_track, reconstructed_track, most_likely_particle_id, label_type="particle_id"
+                )
+                fig.suptitle(
+                    f"Track {track_id} with particle id {most_likely_particle_id} \n\
+                    weight ratio: {ratio:.2f}\
+                    ",
+                    fontsize=20,
+                )
+                fig.savefig(f"reconstructed_track_{track_id}_{event_name}.png", dpi=300)
+                plt.close()
+    LOGGER.info(f"End: { datetime_str()}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog="data_exploration", description="Explore the data")
+
+    parser.add_argument("-e", dest="event_name", type=str, default="event000001001", help="Choose event name")
+    parser.add_argument("-bs", dest="batch_size", type=int, default=20000, help="Choose batch_size")
+
+    args = parser.parse_args()
+    kwargs = vars(args)
+
+    run(**kwargs)
