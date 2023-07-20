@@ -507,3 +507,44 @@ def plot_prediction(
         ax.legend()
 
     return fig
+
+
+def efficiency(
+    truth: pd.DataFrame,
+    test: pd.DataFrame,
+    variable: str | None = None,
+    bins: int = 100,
+    min=None,
+    max=None,
+    title=None,
+    xlabel="x",
+    ylabel="Efficiency",
+    figsize=(10, 6),
+    **kwargs,
+):
+    min_bin = truth[variable].min() if min is None else min
+    max_bin = truth[variable].max() if max is None else max
+    bins_index = pd.cut(pd.Series([min_bin, max_bin]), bins=bins, retbins=True)[1]
+
+    cut_truth = pd.cut(truth[variable], bins=bins_index)  # type: ignore
+    groups_truth = truth.groupby(cut_truth)
+    binned_truth = groups_truth.count()[variable]
+
+    cut_test = pd.cut(test[variable], bins=bins_index)  # type: ignore
+    groups_test = test.groupby(cut_test)
+    binned_test = groups_test.count()[variable]
+
+    efficiency = binned_test / binned_truth
+
+    fig, ax = plt.subplots(figsize=figsize)
+    x = np.arange(min_bin, max_bin, (max_bin - min_bin) / bins)
+    yerr = np.sqrt(binned_test) / binned_truth
+    ax.plot(x, efficiency.values, label=ylabel, **kwargs)
+    ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label="Error")
+    ax.set_ylim(0, 1)
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
+    ax.set_title(f"Efficiency by {xlabel}" if title is None else title)
+    ax.legend()
+
+    return fig
