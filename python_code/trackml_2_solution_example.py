@@ -363,7 +363,7 @@ def make_predict_matrix(
     features: npt.NDArray,
     thr_0=0.2,
     thr_1=0.5,
-    batch_size=2000,
+    batch_size=20000,
     verbosity: str = "0",
     debug_limit: None | int = None,
 ) -> list[npt.NDArray]:
@@ -844,7 +844,7 @@ def run_merging(
     scores: npt.NDArray,
     preds: list[npt.NDArray],
     multi_stage=True,
-    module_id: npt.NDArray = None,
+    module_id: npt.NDArray | None = None,
     log_evaluations=True,
     truth: pd.DataFrame | None = None,
 ):
@@ -1064,7 +1064,11 @@ def run(
     # Make prediction matrix for all hits in the event
     # Look for prediction matrices already existing:
     _make_predict = lambda: save(
-        make_predict_matrix(model, event.features), name="preds", tag=event_name, prefix=DIRECTORY, save=do_export
+        make_predict_matrix(model, event.features, batch_size=batch_size),
+        name="preds",
+        tag=event_name,
+        prefix=DIRECTORY,
+        save=do_export,
     )
     preds: list[npt.NDArray] = find_file(f"preds_{event_name}", dir=DIRECTORY, fallback_func=_make_predict, force_fallback=not preload)  # type: ignore
     LOGGER.info("Predictions loaded")
