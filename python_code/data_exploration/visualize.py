@@ -509,10 +509,90 @@ def plot_prediction(
     return fig
 
 
-def efficiency(
+def compare_histograms(
+    truth,
+    test,
+    variable: str,
+    bins=100,
+    range: tuple[int, int] | None = None,
+    density=False,
+    title="",
+    xlabel="x",
+    ylabel="y",
+    figsize=(10, 6),
+    **kwargs,
+):
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.hist([truth[variable], test[variable]], bins=bins, range=range, density=density, alpha=0.75, **kwargs)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    plt.legend()
+    return fig
+
+
+def fraction_histogram(
+    data: list[DataFrame],
+    variable: str,
+    bins=100,
+    min: float | None = None,  # type: ignore
+    max: float | None = None,  # type: ignore
+    density=False,
+    labels: list[str] | None = None,
+    title="",
+    xlabel="x",
+    ylabel="y",
+    figsize=(10, 6),
+    type="fill",
+    **kwargs,
+):
+    # Find labels
+    if labels is not None:
+        assert len(labels) == len(data), "Number of labels must match number of dataframes"
+    else:
+        labels = [f"df_{i}" for i in np.arange(len(data))]
+
+    # Find range
+    if min is None:
+        mins: list[float] = [df[variable].min() for df in data]
+        min: float = np.min(mins)
+    if max is None:
+        maxs: list[float] = [df[variable].max() for df in data]
+        max: float = np.max(maxs)
+    range: tuple[float, float] = (min, max)  # type: ignore
+
+    # Make histograms
+    hists = [np.histogram(df[variable], bins=bins, range=range, density=density) for df in data]
+    tots = sum([hist[0] for hist in hists])
+
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    x = np.arange(min, max, (max - min) / bins)
+    fractions = np.nan_to_num([hist[0] / tots for hist in hists])
+    cumsum = np.cumsum(fractions, axis=0)
+    for i, (cum, label) in enumerate(zip(cumsum, labels)):
+        floor: float | np.ndarray = cumsum[i - 1] if i > 0 else np.zeros(len(cum))
+        ceiling = cum
+        # ax.plot(x, cum, **kwargs)
+        if type == "fill":
+            ax.fill_between(x, floor, ceiling, label=label, **kwargs)  # type: ignore
+        if type == "bar":
+            ax.bar(x, cum, label=label, zorder=-i, **kwargs)
+
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
+    ax.set_title(f"Efficiency by {xlabel}" if title is None else title)
+    ax.legend()
+
+    ax.legend()
+
+    return fig
+
+
+def plot_efficiency(
     truth: pd.DataFrame,
     test: pd.DataFrame,
-    variable: str | None = None,
+    variable: str,
     bins: int = 100,
     min=None,
     max=None,
@@ -548,3 +628,129 @@ def efficiency(
     ax.legend()
 
     return fig
+
+
+def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir=""):
+    """Evaluate the submission by plotting histograms and efficiencies."""
+
+    tag_str = f"_{tag}" if tag else ""
+
+    # Define types of matches
+    good = pairs[(pairs["particle_purity"] >= thr) & (pairs["track_purity"] >= thr)]
+    split = pairs[(pairs["particle_purity"] < thr) & (pairs["track_purity"] >= thr)]
+    multiple = pairs[(pairs["particle_purity"] >= thr) & (pairs["track_purity"] < thr)]
+    bad = pairs[(pairs["particle_purity"] < thr) & (pairs["track_purity"] < thr)]
+
+    match_types: list[pd.DataFrame] = [good, split, multiple, bad]
+    match_types_str: list[str] = ["good", "split", "multiple", "bad"]
+
+    variables_str = ["r_0", "z_0", "p_0", "p_t_0", "log_10_p_t_0", "phi_0", "theta_0", "pseudo_rapidity_0"]
+    var_labels = [
+        "vertex $r_0$ [mm]",
+        "$z_0$ [mm]",
+        "$p$",
+        "$P_{T}$",
+        "$log_{10}$ $p_{T}$",
+        "$\\phi$",
+        "$\\theta$",
+        "$\\eta$",
+    ]
+
+    mins = [0, -15, None, 0, None, -np.pi, 0, -np.pi]
+    maxs = [600, 15, 25, 5, 2, np.pi, np.pi, np.pi]
+
+    # Plot serperately
+    for match_type_str, matches in zip(match_types_str, match_types):
+        for variable, label in zip(variables_str, var_labels):
+            fig = compare_histograms(
+                particles,
+                matches,
+                variable=variable,
+                bins=100,
+                title=f"Track {label}",
+                xlabel=label,
+                ylabel="Frequence",
+                label=["Truth", "Reconstructed"],
+                histtype="step",
+                linewidth=1,
+                color=["blue", "orange"],
+            )
+            fig.savefig(dir + f"{match_type_str}_{variable}_histogram{tag_str}.jpg", dpi=600)
+            plt.close()
+
+        # Plot efficiency over variables
+        for variable, label, min, max in zip(variables_str, var_labels, mins, maxs):
+            fig = plot_efficiency(
+                particles,
+                matches,
+                variable=variable,
+                bins=100,
+                min=min,
+                max=max,
+                xlabel=label,
+            )
+            fig.savefig(dir + f"{match_type_str}_{variable}_efficiency{tag_str}.jpg", dpi=600)
+            plt.close()
+
+        # Plot zoom of r_0
+        fig = plot_efficiency(
+            particles,
+            matches,
+            variable="r_0",
+            bins=100,
+            min=0,
+            max=100,
+            xlabel="zoom vertex $r_0$ [mm]",
+        )
+        fig.savefig(dir + f"{match_type_str}_{'r_0'}_zoom_efficiency{tag_str}.jpg", dpi=600)
+        plt.close()
+
+    # Plot stacked
+    for variable, label, min, max in zip(variables_str, var_labels, mins, maxs):
+        fig = fraction_histogram(
+            match_types,
+            variable=variable,
+            labels=match_types_str,
+            bins=100,
+            min=min,
+            max=max,
+            title=f"Track {label}",
+            xlabel=label,
+            ylabel="Fraction",
+        )
+        fig.savefig(dir + f"fractions_{variable}_histogram{tag_str}.jpg", dpi=600)
+        plt.close()
+
+    # Plot zoom of r_0
+    fig = fig = fraction_histogram(
+        match_types,
+        variable="r_0",
+        labels=match_types_str,
+        bins=100,
+        min=0,
+        max=100,
+        title=f"Track $r_0$",
+        xlabel="$r_0$",
+        ylabel="Fraction",
+    )
+    fig.savefig(dir + f"fractions_{'r_0'}_zoom_histogram{tag_str}.jpg", dpi=600)
+    plt.close()
+
+    # Plot general purity distribution
+    [df.insert(0, "track_count", 1) for df in match_types]
+    fig = fraction_histogram(
+        match_types,
+        variable="track_count",
+        labels=match_types_str,
+        bins=1,
+        min=0,
+        max=1,
+        title="Track purity distribution",
+        xlabel="",
+        ylabel="Fraction",
+        type="bar",
+    )
+    # remove irrelevant xticks
+    [ax.set_xticks([]) for ax in fig.axes]
+    fig.savefig(dir + f"fractions_track_purity_histogram{tag_str}.jpg", dpi=600)
+    plt.close()
