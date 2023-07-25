@@ -7,10 +7,39 @@ import time
 import hashlib
 from typing import Callable, Any
 from functools import wraps
-from pandas import DataFrame, read_csv
-from trackml.dataset import load_event
+from pandas import DataFrame, read_csv  # type: ignore
+from trackml.dataset import load_event  # type: ignore
 from .constants import CACHE_LOC
 from numpy import load as load_numpy
+
+import logging
+import sys
+
+
+def setup_custom_logger(name=None, dir="logs/", tag="", level=logging.DEBUG) -> logging.Logger:
+    """Setup a custom logger with the given name."""
+    formatter = logging.Formatter(fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    prepare_path(dir)
+
+    handler = logging.FileHandler(dir + f"log_{tag}_{datetime_str()}.txt", mode="w")
+    print(f"Saving log to `{dir}log_{tag}_{datetime_str()}.txt`")
+    handler.setFormatter(formatter)
+    screen_handler = logging.StreamHandler(stream=sys.stdout)
+    screen_handler.setFormatter(formatter)
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.addHandler(handler)
+    logger.addHandler(screen_handler)
+    return logger
+
+
+def get_logger(name=None, **kwargs) -> logging.Logger:
+    """Gets a logger with the given name, or creates one if it does not exist."""
+    logger = logging.getLogger(name)
+    if len(logger.handlers) == 0:
+        return setup_custom_logger(name, **kwargs)
+    return logger
 
 
 def get_event_names(dir: str) -> list[str]:
@@ -35,7 +64,7 @@ def get_event_names(dir: str) -> list[str]:
 
 
 def get_event_names_str(table: DataFrame):
-    event_names = list(table["event"].unique())
+    event_names = list(table["event"].unique())  # type: ignore
     event_names_str = ", ".join(event_names)
     return event_names_str
 
@@ -85,15 +114,16 @@ def hashargs(*args, **kwds):
 def pickle_cache(func: Callable, verbose: bool = False):
     """Decorator function for caching function output to PYC files."""
 
+    funcname = func.__qualname__
+
     @wraps(func)
     def wrapper(*args, **kwds):
-        args_identifier = hashargs(*args, **kwds)
+        args_identifier = funcname + "_" + hashargs(*args, **kwds)
         output = CACHE_LOC + args_identifier + ".pyc"
 
         try:
             data = load_pickle(output)
-            if verbose:
-                print("Found cached data. Loading from cache instead.")
+            get_logger().debug(f"Found cached output for {funcname}. Loading {output}.")
         except FileNotFoundError:
             data = dump_pickle(func(*args, **kwds), output)
         return data
@@ -154,7 +184,7 @@ def save(return_object, name: str | None = None, tag: str | None = None, prefix:
         return_object.to_csv(f"{prefix}{name}{tag}_{time}.{extension}")
     else:
         raise ValueError(f"File extension {extension} not supported.")
-    print(f"Saved `{name} ({object_type})` as `{name}{tag}_{time}.{extension}`{folder_message}")
+    get_logger().info(f"Saved `{name} ({object_type})` as `{name}{tag}_{time}.{extension}`{folder_message}")
 
     return return_object
 
@@ -182,7 +212,7 @@ def find_file(
             # Check if file name and extension match
             file_extension = file.split(".")[-1]
             if name in file and file_extension == extension:
-                print(f"Found `{file}` in {dir}")
+                get_logger().debug(f"Found `{file}` in {dir}")
 
                 # Load file
                 if _is_pickle(file_extension):
@@ -193,7 +223,7 @@ def find_file(
                     return load_numpy(dir + file, allow_pickle=True)
         raise FileNotFoundError
     except FileNotFoundError:
-        print(f"Could not find {extension} file `{name}` in {dir}")
+        get_logger().debug(f"Could not find {extension} file `{name}` in {dir}")
         if fallback_func is not None:
             return fallback_func()
         return None
