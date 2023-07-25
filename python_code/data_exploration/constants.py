@@ -9,8 +9,9 @@ TABLE_INDEX = {
 }
 
 # Local file constants
+DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
 CACHE_LOC = "/data/atlas/users/lschoonh/BachelorProject/data/.pickle_cache/"
-DATA_ROOT = "/data/atlas/users/lschoonh/BachelorProject/data/"
+DATA_ROOT = DIRECTORY + "data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 
 # Matplotlib constants

@@ -197,3 +197,34 @@ def find_file(
         if fallback_func is not None:
             return fallback_func()
         return None
+
+
+def find_files(name: str, dir: str = CACHE_LOC, extension="pkl"):
+    """Load all files in `dir` that are similar to `name`."""
+
+    # Check supported extension
+    is_pickle = _is_pickle(extension)
+    is_csv = _is_csv(extension)
+    is_numpy = _is_numpy(extension)
+    is_supported = any([is_pickle, is_csv, is_numpy])
+    if not is_supported:
+        raise ValueError(f"File extension {extension} not supported.")
+
+    files = []
+    # Look for files in ouput directory
+    onlyfiles = [f for f in os.listdir(dir) if isfile(join(dir, f))]
+    # See if there is a prediction matrix for this event
+    for file in onlyfiles:
+        # Check if file name and extension match
+        file_extension = file.split(".")[-1]
+        if name in file and file_extension == extension:
+            print(f"Found `{file}` in {dir}")
+
+            # Load file
+            if _is_pickle(file_extension):
+                files.append(load_pickle(dir + file))
+            elif _is_csv(file_extension):
+                files.append(read_csv(dir + file))
+            elif _is_numpy(file_extension):
+                files.append(load_numpy(dir + file, allow_pickle=True))
+    return files

@@ -20,9 +20,9 @@ from tqdm import tqdm
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
 from classes.event import Event
 from data_exploration.helpers import datetime_str, find_file, save, pickle_cache
-from data_exploration.visualize import plot_prediction, efficiency
+from data_exploration.visualize import plot_prediction, plot_efficiency
 from trackml.score import score_event
-
+from helpers import setup_custom_logger # type: ignore
 
 DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
 DATA_ROOT = DIRECTORY + "data/"
@@ -30,20 +30,6 @@ DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 MODELS_ROOT = DIRECTORY + "trained_models/2nd_place/"
 SOLUTION_DIR = MODELS_ROOT + "original_model/"
 PREFIX = DATA_SAMPLE
-
-
-def setup_custom_logger(name="logger", dir=DIRECTORY, tag="") -> logging.Logger:
-    formatter = logging.Formatter(fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    handler = logging.FileHandler(dir + f"log_{tag}_{datetime_str()}.txt", mode="w")
-    print(f"Saving log to `{dir}log_{tag}_{datetime_str()}.txt`")
-    handler.setFormatter(formatter)
-    screen_handler = logging.StreamHandler(stream=sys.stdout)
-    screen_handler.setFormatter(formatter)
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
-    logger.addHandler(handler)
-    logger.addHandler(screen_handler)
-    return logger
 
 
 LOGGER: logging.Logger = None  # type: ignore
@@ -1041,8 +1027,10 @@ def run(
     verbose=True,
     **kwargs,
 ):
+    global LOGGER
     LOGGER = setup_custom_logger(tag=event_name)
     LOGGER.info("Start")
+    event_id = int(event_name.split("event")[-1])
     LOGGER.info(f"Vars: { locals()}")
 
     LOGGER.info(f"Num GPUs Available: { len(tf.config.list_physical_devices('GPU'))}")
@@ -1109,7 +1097,7 @@ def run(
 
     # Save submission
     _make_submission = lambda: save(
-        pd.DataFrame({"hit_id": hits.hit_id, "track_id": merged_tracks}),
+        pd.DataFrame({"event_id": event_id, "hit_id": hits.hit_id, "track_id": merged_tracks}),
         name="submission",
         tag=event_name,
         prefix=DIRECTORY,
