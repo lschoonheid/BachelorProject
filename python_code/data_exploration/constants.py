@@ -8,9 +8,10 @@ TABLE_INDEX = {
     "truth": 3,
 }
 
+# TODO: move this to dirs
 # Local file constants
 DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
-CACHE_LOC = "/data/atlas/users/lschoonh/BachelorProject/data/.pickle_cache/"
+CACHE_LOC = "/data/atlas/users/lschoonh/BachelorProject/.pickle_cache/"
 DATA_ROOT = DIRECTORY + "data/"
 DATA_SAMPLE = DATA_ROOT + "train_100_events/"
 

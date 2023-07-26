@@ -8,22 +8,26 @@ import hashlib
 from typing import Callable, Any
 from functools import wraps
 from pandas import DataFrame, read_csv  # type: ignore
+from numpy import load as load_numpy
+
 from trackml.dataset import load_event  # type: ignore
 from .constants import CACHE_LOC
-from numpy import load as load_numpy
+from dirs import LOG_DIR  # type: ignore
 
 import logging
 import sys
 
 
-def setup_custom_logger(name=None, dir="logs/", tag="", level=logging.DEBUG) -> logging.Logger:
+def setup_custom_logger(name=None, dir=LOG_DIR, tag="", level=logging.DEBUG) -> logging.Logger:
     """Setup a custom logger with the given name."""
     formatter = logging.Formatter(fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
     prepare_path(dir)
 
-    handler = logging.FileHandler(dir + f"log_{tag}_{datetime_str()}.txt", mode="w")
-    print(f"Saving log to `{dir}log_{tag}_{datetime_str()}.txt`")
+    tag_str = f"_{tag}" if tag else ""
+
+    handler = logging.FileHandler(dir + f"log{tag_str}_{datetime_str()}.txt", mode="w")
+    print(f"Saving log to `{dir}log{tag_str}_{datetime_str()}.txt`")
     handler.setFormatter(formatter)
     screen_handler = logging.StreamHandler(stream=sys.stdout)
     screen_handler.setFormatter(formatter)
@@ -123,7 +127,7 @@ def pickle_cache(func: Callable, verbose: bool = False):
 
         try:
             data = load_pickle(output)
-            get_logger().debug(f"Found cached output for {funcname}. Loading {output}.")
+            get_logger().debug(f"Loaded cached output for `{funcname}` at `{output}`")
         except FileNotFoundError:
             data = dump_pickle(func(*args, **kwds), output)
         return data

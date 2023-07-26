@@ -18,7 +18,7 @@ from predict import make_predict_matrix
 from produce import get_all_paths, run_merging
 from score import get_track_scores, score_event_fast
 
-from dirs import LOG_DIR, OUTPUT_DIR
+from dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR
 
 
 def run(
@@ -50,7 +50,7 @@ def run(
     hits = event.hits
     module_id = get_module_id(hits)
 
-    model = get_model(preload=not new_model, save=do_export)
+    model = get_model(preload=not new_model, save=do_export, dir=MODELS_ROOT)
     logger.info("Model loaded")
 
     if do_test:
