@@ -137,8 +137,12 @@ def add_purities(
     return good_pairs
 
 
-def add_r(combined: DataFrame):
-    r = np.sqrt(np.sum(combined[["tx", "ty", "tz"]].values ** 2, axis=1))
+def add_r(combined: DataFrame, mode="truth"):
+    if mode == "truth":
+        labels = ["tx", "ty", "tz"]
+    else:
+        labels = ["x", "y", "z"]
+    r = np.sqrt(np.sum(combined[labels].values ** 2, axis=1))
     copy = combined.copy()
     copy.insert(4, "r", r)
     return copy
