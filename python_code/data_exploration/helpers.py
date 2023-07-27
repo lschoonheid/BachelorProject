@@ -8,6 +8,7 @@ import hashlib
 from typing import Callable, Any
 from functools import wraps
 from pandas import DataFrame, read_csv  # type: ignore
+import numpy as np
 from numpy import load as load_numpy
 
 from trackml.dataset import load_event  # type: ignore
@@ -164,7 +165,7 @@ def datetime_str() -> str:
     return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
-def save(return_object, name: str | None = None, tag: str | None = None, prefix: str = "", save=True, extension="pkl"):
+def save(return_object, name: str | None = None, tag: str | None = None, dir: str = "", save=True, extension="pkl"):
     """Wrapping function for dumping `return_object` to a pickle file with name `name` and optional tag `tag`."""
     object_type = type(return_object).__name__
     if name is None:
@@ -179,18 +180,29 @@ def save(return_object, name: str | None = None, tag: str | None = None, prefix:
 
     if tag is not None:
         tag = f"_{tag}"
-    folder_message = f" in folder `{prefix}`" if prefix else " in current folder."
+    folder_message = f" in folder `{dir}`" if dir else " in current folder."
 
     time = datetime_str()
     if _is_pickle(extension):
-        dump_pickle(return_object, f"{prefix}{name}{tag}_{time}.{extension}")
+        dump_pickle(return_object, f"{dir}{name}{tag}_{time}.{extension}")
     elif _is_csv(extension):
-        return_object.to_csv(f"{prefix}{name}{tag}_{time}.{extension}")
+        return_object.to_csv(f"{dir}{name}{tag}_{time}.{extension}")
     else:
         raise ValueError(f"File extension {extension} not supported.")
     get_logger().info(f"Saved `{name} ({object_type})` as `{name}{tag}_{time}.{extension}`{folder_message}")
 
     return return_object
+
+
+def find_filenames(name: str, dir: str = CACHE_LOC, extension="pkl") -> list[str]:
+    """Return all filenames that match with `name` and `extension` in `dir`."""
+    onlyfiles = [f for f in os.listdir(dir) if isfile(join(dir, f))]
+    matched_files = []
+    for file in onlyfiles:
+        file_extension = file.split(".")[-1]
+        if name in file and file_extension == extension:
+            matched_files.append(file)
+    return matched_files
 
 
 def find_file(
@@ -210,13 +222,13 @@ def find_file(
 
     try:
         # Look for files in ouput directory
-        onlyfiles = [f for f in os.listdir(dir) if isfile(join(dir, f))]
+        onlyfiles = find_filenames(name, dir=dir, extension=extension)
         # See if there is a prediction matrix for this event
         for file in onlyfiles:
             # Check if file name and extension match
             file_extension = file.split(".")[-1]
             if name in file and file_extension == extension:
-                get_logger().debug(f"Found `{file}` in {dir}")
+                get_logger().debug(f"Found `{file}` in `{dir}`")
 
                 # Load file
                 if _is_pickle(file_extension):
@@ -246,7 +258,7 @@ def find_files(name: str, dir: str = CACHE_LOC, extension="pkl"):
 
     files = []
     # Look for files in ouput directory
-    onlyfiles = [f for f in os.listdir(dir) if isfile(join(dir, f))]
+    onlyfiles = find_filenames(name, dir=dir, extension=extension)
     # See if there is a prediction matrix for this event
     for file in onlyfiles:
         # Check if file name and extension match
@@ -262,3 +274,44 @@ def find_files(name: str, dir: str = CACHE_LOC, extension="pkl"):
             elif _is_numpy(file_extension):
                 files.append(load_numpy(dir + file, allow_pickle=True))
     return files
+
+
+def cached(
+    name: str,
+    dir: str = CACHE_LOC,
+    extension="pkl",
+    fallback_func: Callable | None = None,
+    force_fallback=False,
+    do_save=True,
+):
+    """Similar to `@pickle_cache` but able to configure name and directory for each individual call and looser file-function call matching which disregards function inputs."""
+    return find_file(
+        name=name,
+        dir=dir,
+        extension=extension,
+        fallback_func=lambda: save(fallback_func, name=name, dir=dir, save=do_save),
+        force_fallback=force_fallback,
+    )
+
+
+def add_r(combined: DataFrame, mode="truth"):
+    if mode == "truth":
+        labels = ["tx", "ty", "tz"]
+    else:
+        labels = ["x", "y", "z"]
+    r = np.sqrt(np.sum(combined[labels].values ** 2, axis=1))
+    copy = combined.copy()
+    copy.insert(4, "r", r)
+    return copy
+
+
+def select_r_0(combined: DataFrame):
+    r_sorted = add_r(combined).sort_values("r", ascending=True)
+    r_mask = r_sorted[r_sorted.duplicated(subset="particle_id", keep="first")]
+    r_0 = r_sorted[~r_sorted.index.isin(r_mask.index)]  # .rename(columns={"r": "r_0"})
+    return r_0
+
+
+def select_r_less(hits: DataFrame, thr: float = 300):
+    inner_idx = np.where(add_r(hits, mode="hits")["r"] < thr)[0]
+    return inner_idx
