@@ -17,7 +17,7 @@ from tqdm import tqdm
 import numpy.typing as npt
 import pandas as pd
 from dirs import MODELS_ROOT, LOG_DIR, OUTPUT_DIR
-from data_exploration.helpers import datetime_str, get_logger, pickle_cache
+from data_exploration.helpers import datetime_str, get_logger, pickle_cache, find_filenames
 from features import get_particle_ids, get_featured_event
 
 # Hyperparameters
@@ -33,16 +33,44 @@ LOSS_FUNCTION = "binary_crossentropy"
 
 # Learning rates
 # LEARNING_RATES: list[float] = [-5, -4, -5]
-LEARNING_RATES: list[float] = [-3, -3, -4, -4, -5, -5]
+LEARNING_RATE_EXPS: list[float] = [-3, -4, -5]
 # EPOCHS = [1, 20, 3]
 # EPOCHS = [5, 50,50, 30]
-EPOCHS = [5, 5, 50, 50, 15, 15]
+EPOCHS = [10, 100, 30]
 
 # Hard negative training
 # LR_HARD: list[float] = [-4, -5, -6]
-LR_HARD: list[float] = [-4, -4, -5, -5, -6, -6]
+LR_EXPS_HARD: list[float] = [-4, -5, -6]
 # EPOCHS_HARD = [30, 10, 2]
-EPOCHS_HARD = [75, 75, 25, 25, 10, 10]
+EPOCHS_HARD = [150, 50, 20]
+
+
+# TODO: rename
+def _get_log_dir() -> str:
+    return LOG_DIR + "tensorboard_logs/fit/" + datetime_str()
+
+
+def _get_tensorboard_callback():
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=_get_log_dir(), histogram_freq=1)
+    return tensorboard_callback
+
+
+def _get_last_model_name(dir: str = OUTPUT_DIR) -> None | str:
+    """Get name of last saved model in directory `dir`."""
+    candidates = find_filenames(name="model_epoch", dir=dir, extension="h5")
+    if len(candidates) == 0:
+        get_logger().warning(f"No model found in `{dir}` when trying to continue training.")
+        return None
+    candidates.sort()
+    last_name = candidates[-1]
+
+    return last_name
+
+
+def _batchify(start: int, stop: int, batch_size: int):
+    """Get ranges of batches."""
+    ranges = [range(i, min(i + batch_size, stop)) for i in range(start, stop, batch_size)]
+    return ranges
 
 
 def get_train_0(size: int, n: int, truth: pd.DataFrame, features: npt.NDArray) -> npt.NDArray:
@@ -149,7 +177,7 @@ def get_hard_negatives(model: Model, event_range: range = EVENT_RANGE):
 def do_train(
     model: Model,
     Train: npt.NDArray,
-    lr: float,
+    lr_exp: float,
     epochs: int,
     batch_size: int,
     validation_split: float,
@@ -157,7 +185,17 @@ def do_train(
     callbacks: list[Any] = [],
     epochs_passed: int = 0,
 ):
-    model.compile(loss=[loss_function], optimizer=Adam(learning_rate=10 ** (lr)), metrics=["accuracy"])
+    """Execute training of model."""
+    # Configure TensorFlow to allow memory growth
+    config = tf.compat.v1.ConfigProto()
+    config.gpu_options.allow_growth = True
+    sess = tf.compat.v1.Session(config=config)
+    tf.compat.v1.keras.backend.set_session(sess)
+
+    # Compile model with learning rate
+    model.compile(loss=[loss_function], optimizer=Adam(learning_rate=10**lr_exp), metrics=["accuracy"])
+
+    # Train model
     History = model.fit(
         x=Train[:, :-1],  # type: ignore
         y=Train[:, -1],  # type: ignore
@@ -172,106 +210,128 @@ def do_train(
     return History
 
 
-# TODO: rename
-def _get_log_dir() -> str:
-    return LOG_DIR + "tensorboard_logs/fit/" + datetime_str()
+def cycle_train(
+    model: Model,
+    learning_rates: list[float],
+    epochs: list[int],
+    Train_batches: list[npt.NDArray],
+    batch_size: int,
+    epochs_passed: int = 0,
+    skip_epochs: int = 0,
+    validation_split=VALIDATION_SPLIT,
+    tensorboard_callback=None,
+    save_loc: str | None = None,
+    save_interval: int = 5,
+    **kwargs,
+) -> int:
+    """Train model in cycles. Returns `int` of total number of epochs passed."""
+    get_logger().info(f"Training model with {len(Train_batches)} event batches")
+    # Cycle through learning rates and epochs
+    for lr, n_epoch in zip(learning_rates, epochs):
+        # Cycle through event batches
+        for Train in tqdm(Train_batches, desc="Training event batches", file=sys.stdout):
+            n_epoch_batched = _batchify(epochs_passed, epochs_passed + n_epoch, save_interval)
+            # Do epochs in batches
+            for n_epoch_curr in [len(epoch_range) for epoch_range in n_epoch_batched]:
+                # Continue from checkpoint of last model, skip until epochs_passed matches that of last model
+                if epochs_passed + n_epoch_curr <= skip_epochs:
+                    epochs_passed += n_epoch_curr
+                    get_logger().debug(f"Skipping until {epochs_passed} epochs")
+                    continue
 
+                # Execute training
+                do_train(
+                    model,
+                    Train,
+                    lr,
+                    n_epoch_curr,
+                    batch_size,
+                    validation_split,
+                    LOSS_FUNCTION,
+                    epochs_passed=epochs_passed,
+                    callbacks=[tensorboard_callback],
+                )
+                epochs_passed += n_epoch_curr
 
-def _get_tensorboard_callback():
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=_get_log_dir(), histogram_freq=1)
-    return tensorboard_callback
+                if save_loc is not None:
+                    model.save(save_loc + f"/model_epoch{epochs_passed}_{datetime_str()}.h5")
+                    get_logger().debug(f"Saved model to `{save_loc}/model_epoch{epochs_passed}_{datetime_str()}.h5`")
+    return epochs_passed
 
 
 def run_training(
     event_range: range = EVENT_RANGE,
-    learning_rates: list[float] = LEARNING_RATES,
-    epochs: list[int] = EPOCHS,
-    learning_rates_hard: list[float] = LR_HARD,
+    learning_rates_pre: list[float] = LEARNING_RATE_EXPS,
+    epochs_pre: list[int] = EPOCHS,
+    learning_rates_hard: list[float] = LR_EXPS_HARD,
     epochs_hard: list[int] = EPOCHS_HARD,
     batch_size: int = BATCH_SIZE,
-    event_batch_size: int = 10,
+    event_batch_size: int = 50,
     validation_split=VALIDATION_SPLIT,
     save_loc: str | None = None,
+    save_interval: int = 5,
+    continue_train=False,
 ) -> Model:
-    """Get trained model."""
+    """Get fully trained model."""
     get_logger().debug(f"Vars `run_training`: { locals()}")
 
-    n_events = len(event_range)
-    do_event_batch = event_batch_size < n_events
-    ranges = [range(i, min(i + event_batch_size, n_events)) for i in range(0, n_events, event_batch_size)]
+    skip_epochs = 0
+    # Init model
+    if continue_train:
+        assert save_loc, "No save location specified"
+        continue_name = _get_last_model_name(dir=save_loc)
+        assert continue_name, "No model found to continue training from"
+        model = load_model(save_loc + continue_name)
+        # Get number of epochs passed from name
+        skip_epochs = int(continue_name.split("_")[1].split(".")[0].replace("epoch", ""))
+    else:
+        model = init_model()
 
     # Prepare training set
-    Train_batches = []
+    n_events = len(event_range)
+    do_event_batch = event_batch_size < n_events
+    ranges = _batchify(0, n_events, event_batch_size)
+    Train_batches_pre = []
     if do_event_batch:
         for curr_range in tqdm(ranges, desc="Getting event batches", file=sys.stdout):
-            Train_batches.append(get_train(curr_range))
+            Train_batches_pre.append(get_train(curr_range))
     else:
-        Train_batches = [get_train(event_range)]
-
-    # Init model
-    model = init_model()
-
-    epochs_passed = 0
-
-    # Train model
+        Train_batches_pre = [get_train(event_range)]
 
     # Prerpare tensorboard
     tensorboard_callback = _get_tensorboard_callback()
 
+    # Train model
+
     # Train regular
-    get_logger().info(f"Training model with {len(Train_batches)} event batches")
-    for lr, n_epoch in zip(learning_rates, epochs):
-        for Train in Train_batches:
-            # Execute training
-            do_train(
-                model,
-                Train,
-                lr,
-                n_epoch,
-                batch_size,
-                validation_split,
-                LOSS_FUNCTION,
-                epochs_passed=epochs_passed,
-                callbacks=[tensorboard_callback],
-            )
-            epochs_passed += n_epoch
+    get_logger().info(f"Start regular training of model.")
+    epochs_passed = cycle_train(
+        learning_rates=learning_rates_pre,
+        epochs=epochs_pre,
+        Train_batches=Train_batches_pre,
+        epochs_passed=0,
+        **locals(),
+    )
+    get_logger().info(f"Trained model with {epochs_passed} epochs in {len(Train_batches_pre)} event batches")
 
-            if save_loc is not None:
-                model.save(save_loc + f"/model_epoch{epochs_passed}_{datetime_str()}.h5")
-                get_logger().debug(f"Saved model to `{save_loc}/model_epoch{epochs_passed}_{datetime_str()}.h5`")
-    get_logger().info(f"Trained model with {epochs_passed} epochs in {len(Train_batches)} event batches")
-
-    Train_hard_batches = []
-    for Train, curr_range in zip(Train_batches, ranges):
+    # Prepare hard negative training set
+    Train_batches_hard = []
+    for Train, curr_range in zip(Train_batches_pre, ranges):
         # Add hard negatives to training set
         Train_hard = get_hard_negatives(model, curr_range)
         Train_new = np.vstack((Train, Train_hard))
         np.random.shuffle(Train_new)
         get_logger().debug(f"Train HN shape: {Train_new.shape}")
-        Train_hard_batches.append(Train_new)
+        Train_batches_hard.append(Train_new)
 
     # Train hard
-    get_logger().info(f"Training HN model with {len(Train_batches)} event batches")
-    for lr, n_epoch in zip(learning_rates_hard, epochs_hard):
-        for Train in Train_hard_batches:
-            # Execute training
-            do_train(
-                model,
-                Train,
-                lr,
-                n_epoch,
-                batch_size,
-                validation_split,
-                LOSS_FUNCTION,
-                epochs_passed=epochs_passed,
-                callbacks=[tensorboard_callback],
-            )
-            epochs_passed += n_epoch
-
-            if save_loc is not None:
-                model.save(save_loc + f"/model_epoch_hard{epochs_passed}_{datetime_str()}.h5")
-                get_logger().debug(f"Saved model to `{save_loc}/model_epoch{epochs_passed}_{datetime_str()}.h5`")
-
+    get_logger().info(f"Start hard negative training of model.")
+    epochs_passed = cycle_train(
+        learning_rates=learning_rates_hard,
+        epochs=epochs_hard,
+        Train_batches=Train_batches_hard,
+        **locals(),
+    )
     return model
 
 
@@ -285,7 +345,7 @@ def get_model(
 ) -> Model:
     # Get model
     if not preload:
-        model = run_training(save_loc=dir + "/between/", **kwargs)
+        model = run_training(save_loc=dir + "between/", **kwargs)
         if save:
             outname = f"/new_{datetime_str()}" if outname is None else outname
             model.save(dir + outname + ".h5")
@@ -311,6 +371,9 @@ if __name__ == "__main__":
         type=tuple[int, int, int],  # type: ignore
         default=EPOCHS_HARD,
         help="Epochs for hard negative training",
+    )
+    parser.add_argument(
+        "-continue", dest="continue_train", action="store_true", help="Continue training from last model"
     )
 
     args = parser.parse_args()
