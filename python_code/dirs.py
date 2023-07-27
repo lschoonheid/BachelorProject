@@ -6,4 +6,4 @@ SOLUTION_DIR = MODELS_ROOT + "original_model/"
 PREFIX = DATA_SAMPLE
 
 LOG_DIR = DIRECTORY + "logs/DNN/"
-OUTPUT_DIR = DIRECTORY + "new/"
+OUTPUT_DIR = DIRECTORY + "output/tracklets/"

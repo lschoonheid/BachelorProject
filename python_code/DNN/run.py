@@ -4,18 +4,20 @@ import os
 import numpy.typing as npt
 import pandas as pd
 
+
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
 from model import get_model
 from test import show_test  # type: ignore
-from data_exploration.helpers import get_logger, datetime_str, find_file, save  # type: ignore
+from data_exploration.helpers import get_logger, datetime_str, find_file, save, cached  # type: ignore
 from data_exploration.visualize import plot_prediction
 from trackml.score import score_event
 from features import get_featured_event, get_module_id
 from predict import make_predict_matrix
 from produce import get_all_paths, run_merging
+from seeds import get_all_tracklets
 from score import get_track_scores, score_event_fast
 
 from dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR
@@ -24,6 +26,7 @@ from dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR
 def run(
     event_name: str = "event000001001",
     new_model=False,
+    mode="tracklets",
     preload=True,
     do_export=True,
     batch_size=20000,
@@ -42,6 +45,14 @@ def run(
     event_id = int(event_name.split("event")[-1])
     logger.debug(f"Vars: { locals()}")
 
+    # Choose generator
+    if mode == "tracks":
+        generator = get_all_paths
+    elif mode == "tracklets":
+        generator = get_all_tracklets
+    else:
+        raise ValueError(f"Mode {mode} not supported.")
+
     logger.info(f"Num GPUs Available: { len(tf.config.list_physical_devices('GPU'))}")
     logger.debug(tf.config.list_physical_devices("GPU"))
 
@@ -57,63 +68,44 @@ def run(
         # Test model, output some visualized tracks
         show_test(event, module_id, repeats, n_test, pick_random, animate)
 
-    # Make prediction matrix for all hits in the event
-    # Look for prediction matrices already existing:
-    _make_predict = lambda: save(
-        make_predict_matrix(model, event.features, batch_size=batch_size),
-        name="preds",
-        tag=event_name,
-        prefix=OUTPUT_DIR,
-        save=do_export,
-    )
-    preds: list[npt.NDArray] = find_file(f"preds_{event_name}", dir=OUTPUT_DIR, fallback_func=_make_predict, force_fallback=not preload)  # type: ignore
+    preds: list[npt.NDArray] = cached(
+        f"preds_{event_name}",
+        dir=OUTPUT_DIR,
+        fallback_func=lambda: make_predict_matrix(model, event.features, batch_size=batch_size),
+        force_fallback=not preload,
+        do_save=do_export,
+    )  # type: ignore
     logger.info("Predictions loaded")
 
     # Generate tracks for each hit as seed
     thr: float = 0.85
 
-    _make_tracks = lambda: save(
-        get_all_paths(hits, thr, module_id, preds, do_redraw=True),
-        name="tracks_all",
-        tag=event_name,
-        prefix=OUTPUT_DIR,
-        save=do_export,
-    )
-    tracks_all: list[npt.NDArray] = find_file(f"tracks_all_{event_name}", dir=OUTPUT_DIR, fallback_func=_make_tracks, force_fallback=not preload)  # type: ignore
-    logger.info("Tracks loaded")
+    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: generator(hits, thr, module_id, preds, do_redraw=True), force_fallback=not preload, do_save=do_export)  # type: ignore
+    logger.info(f"{mode} loaded")
 
     # calculate track's confidence
-    _make_scores = lambda: save(
-        get_track_scores(tracks_all), name="scores", tag=event_name, prefix=OUTPUT_DIR, save=do_export
-    )
-    scores: npt.NDArray = find_file(f"scores_{event_name}", dir=OUTPUT_DIR, fallback_func=_make_scores, force_fallback=not preload)  # type: ignore
+    scores: npt.NDArray = cached(f"scores_{mode}_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: get_track_scores(tracks_all), force_fallback=not preload, do_save=do_export)  # type: ignore
     logger.info("Scores loaded")
 
     # Merge tracks
-    _make_merged_tracks = lambda: save(
-        run_merging(
+    merged_tracks: npt.NDArray = cached(
+        f"merged_{mode}_{event_name}",
+        dir=OUTPUT_DIR,
+        fallback_func=lambda: run_merging(
             tracks_all, scores, preds, multi_stage=True, module_id=module_id, log_evaluations=True, truth=event.truth
         ),
-        name="merged_tracks",
-        tag=event_name,
-        prefix=OUTPUT_DIR,
-        save=do_export,
-    )  # type: ignore
-    merged_tracks: npt.NDArray = find_file(
-        f"merged_tracks_{event_name}", dir=OUTPUT_DIR, fallback_func=_make_merged_tracks, force_fallback=not preload
+        force_fallback=not preload,
+        do_save=do_export,
     )  # type: ignore
     logger.info("Merged tracks loaded")
 
     # Save submission
-    _make_submission = lambda: save(
-        pd.DataFrame({"event_id": event_id, "hit_id": hits.hit_id, "track_id": merged_tracks}),
-        name="submission",
-        tag=event_name,
-        prefix=OUTPUT_DIR,
-        save=do_export,
-    )
-    submission: pd.DataFrame = find_file(
-        f"submission_{event_name}", dir=OUTPUT_DIR, fallback_func=_make_submission, force_fallback=not preload
+    submission: pd.DataFrame = cached(
+        f"submission_{mode}_{event_name}",
+        dir=OUTPUT_DIR,
+        fallback_func=lambda: pd.DataFrame({"event_id": event_id, "hit_id": hits.hit_id, "track_id": merged_tracks}),
+        force_fallback=not preload,
+        do_save=do_export,
     )  # type: ignore
     logger.info("Submission loaded")
 
@@ -142,6 +134,10 @@ def run(
                 possible_particle_ids: pd.DataFrame = grouped[grouped["track_id"] == track_id].sort_values(
                     "count_both", ascending=False
                 )
+                logger.debug(f"Possible particle ids: \n {possible_particle_ids}")
+                if len(possible_particle_ids) == 0:
+                    # No match
+                    continue
                 most_likely_particle_id = int(possible_particle_ids.iloc[0]["particle_id"])
 
                 # Select related truth and reconstructed hits

@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Callable
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -37,6 +38,55 @@ def make_predict(
     # Filter Tx on predictions above threshold and swap first and last five columns
     # TTA
     Tx2 = np.zeros((len(idx), 10))
+    Tx2[:, 5:] = Tx[idx, :5]
+    Tx2[:, :5] = Tx[idx, 5:]
+
+    # Predict again with swapped columns
+    pred1 = model.predict(Tx2, batch_size=batch_size)[:, 0]  # type: ignore
+
+    # Take average of predictions and swapped predictions
+    pred[idx] = (pred[idx] + pred1) / 2
+
+    return pred
+
+
+def make_predict_fast(
+    model: Model,
+    features,
+    hits: pd.DataFrame,
+    hit_id: int,
+    thr=0.85,
+    batch_size: int | None = None,
+    selector: Callable[[int, pd.DataFrame], npt.NDArray] = lambda hit_id, hits: np.arange(len(hits)),
+) -> npt.NDArray:
+    cand_idx = selector(hit_id, hits)
+    # cand_idx = np.arange(len(features))
+    cand_features = features[cand_idx]
+
+    Tx = np.zeros((len(cand_features), 10))
+    # Set first five columns of Tx to be the features of the hit with hit_id
+    # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
+    hit_index = hit_id - 1
+    Tx[:, :5] = np.tile(features[hit_index], (len(Tx), 1))
+    # Set last five columns of Tx to be the features of all hits
+    Tx[:, 5:] = cand_features
+
+    # Make prediction
+    batch_size = batch_size or round(len(Tx) / (5 * len(cand_idx) / len(features)))
+    pred_small = model.predict(Tx, batch_size=batch_size)[:, 0]  # type: ignore
+    pred = np.zeros(len(hits))
+    pred[cand_idx] = pred_small
+
+    # TTA (test time augmentation)
+    """ TTA takes a similar concept but applies it during the testing or inference phase. Instead of making predictions on the original test samples alone, TTA generates multiple augmented versions of the test samples by applying various transformations or augmentations. The model then makes predictions on each augmented version, and the final prediction is obtained by aggregating the predictions from all the augmented samples. Common aggregation techniques include taking the average or the maximum probability across the augmented predictions. """
+
+    # Take indices of prediction that have a prediction above the threshold
+    idx = np.where(pred > thr)[0]
+
+    # Filter Tx on predictions above threshold and swap first and last five columns
+    # TTA
+    Tx2 = np.zeros((len(idx), 10))
+    # print(len(cand_idx), len(Tx), len(Tx2))
     Tx2[:, 5:] = Tx[idx, :5]
     Tx2[:, :5] = Tx[idx, 5:]
 
