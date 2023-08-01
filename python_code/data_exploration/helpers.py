@@ -289,7 +289,7 @@ def cached(
         name=name,
         dir=dir,
         extension=extension,
-        fallback_func=lambda: save(fallback_func, name=name, dir=dir, save=do_save),
+        fallback_func=lambda: save(fallback_func(), name=name, dir=dir, save=do_save),  # type: ignore
         force_fallback=force_fallback,
     )
 
@@ -313,5 +313,6 @@ def select_r_0(combined: DataFrame):
 
 
 def select_r_less(hits: DataFrame, thr: float = 300):
+    """Return indices of hits with r < `thr`."""
     inner_idx = np.where(add_r(hits, mode="hits")["r"] < thr)[0]
     return inner_idx
