@@ -10,6 +10,7 @@ os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from keras.models import Model, Sequential, load_model
 from keras.layers import Dense
 from keras.optimizers import Adam
+from keras import backend as kb
 import tensorflow as tf
 from tqdm import tqdm
 
@@ -18,7 +19,7 @@ import numpy.typing as npt
 import pandas as pd
 from dirs import MODELS_ROOT, LOG_DIR, OUTPUT_DIR
 from data_exploration.helpers import datetime_str, get_logger, pickle_cache, find_filenames
-from features import get_particle_ids, get_featured_event
+from features import get_particle_ids, get_featured_event  # type: ignore
 
 # Hyperparameters
 N_EVENTS = 100
@@ -61,8 +62,11 @@ def _get_last_model_name(dir: str = OUTPUT_DIR) -> None | str:
     if len(candidates) == 0:
         get_logger().warning(f"No model found in `{dir}` when trying to continue training.")
         return None
-    candidates.sort()
-    last_name = candidates[-1]
+
+    recency = [os.path.getmtime(dir + name) for name in candidates]
+    last_idx = np.argmax(recency)
+
+    last_name = candidates[last_idx]
 
     return last_name
 
@@ -134,17 +138,6 @@ def get_train(event_range: range = EVENT_RANGE) -> npt.NDArray:
     return Train
 
 
-def init_model(fs: int = 10) -> Model:
-    model = Sequential()
-    model.add(Dense(800, activation="selu", input_shape=(fs,)))
-    model.add(Dense(400, activation="selu"))
-    model.add(Dense(400, activation="selu"))
-    model.add(Dense(400, activation="selu"))
-    model.add(Dense(200, activation="selu"))
-    model.add(Dense(1, activation="sigmoid"))
-    return model
-
-
 @pickle_cache
 def get_hard_negatives(model: Model, event_range: range = EVENT_RANGE):
     """Get hard negative feature set for training."""
@@ -172,6 +165,17 @@ def get_hard_negatives(model: Model, event_range: range = EVENT_RANGE):
     del Train0  # type: ignore
     print(Train_hard.shape)  # type: ignore
     return Train_hard
+
+
+def init_model(fs: int = 10) -> Model:
+    model = Sequential()
+    model.add(Dense(800, activation="selu", input_shape=(fs,)))
+    model.add(Dense(400, activation="selu"))
+    model.add(Dense(400, activation="selu"))
+    model.add(Dense(400, activation="selu"))
+    model.add(Dense(200, activation="selu"))
+    model.add(Dense(1, activation="sigmoid"))
+    return model
 
 
 def do_train(
@@ -207,6 +211,8 @@ def do_train(
         shuffle=True,
         callbacks=callbacks,
     )
+    tf.compat.v1.keras.backend.clear_session()
+    kb.clear_session()
     return History
 
 
@@ -221,7 +227,7 @@ def cycle_train(
     validation_split=VALIDATION_SPLIT,
     tensorboard_callback=None,
     save_loc: str | None = None,
-    save_interval: int = 5,
+    save_interval: int = 1,
     **kwargs,
 ) -> int:
     """Train model in cycles. Returns `int` of total number of epochs passed."""
@@ -276,7 +282,14 @@ def run_training(
     get_logger().debug(f"Vars `run_training`: { locals()}")
 
     skip_epochs = 0
-    # Init model
+    # # Init model
+    # # Create a MirroredStrategy. For GPU training, this will use all GPUs available to the process.
+    # # strategy = tf.distribute.MirroredStrategy()
+    # # strategy = tf.distribute.MirroredStrategy(cross_device_ops=tf.distribute.ReductionToOneDevice())
+    # get_logger().debug("Number of devices: {}".format(strategy.num_replicas_in_sync))
+
+    # # Open a strategy scope.
+    # with strategy.scope():
     if continue_train:
         assert save_loc, "No save location specified"
         continue_name = _get_last_model_name(dir=save_loc)
@@ -284,16 +297,18 @@ def run_training(
         model = load_model(save_loc + continue_name)
         # Get number of epochs passed from name
         skip_epochs = int(continue_name.split("_")[1].split(".")[0].replace("epoch", ""))
+        get_logger().debug(f"Continuing training from `{continue_name}` with {skip_epochs} epochs passed")
     else:
         model = init_model()
 
     # Prepare training set
     n_events = len(event_range)
     do_event_batch = event_batch_size < n_events
-    ranges = _batchify(0, n_events, event_batch_size)
+    event_start = event_range[0]
+    event_ranges = _batchify(event_start, n_events, event_batch_size)
     Train_batches_pre = []
     if do_event_batch:
-        for curr_range in tqdm(ranges, desc="Getting event batches", file=sys.stdout):
+        for curr_range in tqdm(event_ranges, desc="Getting event batches", file=sys.stdout):
             Train_batches_pre.append(get_train(curr_range))
     else:
         Train_batches_pre = [get_train(event_range)]
@@ -311,12 +326,12 @@ def run_training(
         Train_batches=Train_batches_pre,
         epochs_passed=0,
         **locals(),
-    )
+    )  # type: ignore
     get_logger().info(f"Trained model with {epochs_passed} epochs in {len(Train_batches_pre)} event batches")
 
     # Prepare hard negative training set
     Train_batches_hard = []
-    for Train, curr_range in zip(Train_batches_pre, ranges):
+    for Train, curr_range in zip(Train_batches_pre, event_ranges):
         # Add hard negatives to training set
         Train_hard = get_hard_negatives(model, curr_range)
         Train_new = np.vstack((Train, Train_hard))
@@ -331,7 +346,7 @@ def run_training(
         epochs=epochs_hard,
         Train_batches=Train_batches_hard,
         **locals(),
-    )
+    )  # type: ignore
     return model
 
 
