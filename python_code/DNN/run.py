@@ -11,13 +11,12 @@ import matplotlib.pyplot as plt
 
 from model import get_model
 from test import show_test  # type: ignore
-from data_exploration.helpers import get_logger, datetime_str, find_file, save, cached  # type: ignore
+from data_exploration.helpers import get_logger, datetime_str, find_file, save, cached, select_r_less  # type: ignore
 from data_exploration.visualize import plot_prediction
 from trackml.score import score_event
 from features import get_featured_event, get_module_id
 from predict import make_predict_matrix
 from produce import get_all_paths, run_merging
-from seeds import get_all_tracklets
 from score import get_track_scores, score_event_fast
 
 from dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR
@@ -45,14 +44,6 @@ def run(
     event_id = int(event_name.split("event")[-1])
     logger.debug(f"Vars: { locals()}")
 
-    # Choose generator
-    if mode == "tracks":
-        generator = get_all_paths
-    elif mode == "tracklets":
-        generator = get_all_tracklets
-    else:
-        raise ValueError(f"Mode {mode} not supported.")
-
     logger.info(f"Num GPUs Available: { len(tf.config.list_physical_devices('GPU'))}")
     logger.debug(tf.config.list_physical_devices("GPU"))
 
@@ -60,6 +51,47 @@ def run(
     event = get_featured_event(event_name)
     hits = event.hits
     module_id = get_module_id(hits)
+
+    # Choose hit subjects
+    if mode == "tracks":
+        # Select all hits as subjects
+        subject_idx = None
+        stages = [
+            {"thr": 6},  # 0: merge
+            {"thr": 0.6},  # 1: extend
+            {"thr": 3, "thr_extend_0": 3, "thr_extend_1": 0.6},  # 2: merge + extend
+            {"thr": 0.5},  # 3: extend
+            {"thr": 2, "thr_extend_0": 1, "thr_extend_1": 0.5},  # 4: merge + extend
+            {"thr": 0.5},  # 5: extend
+        ]
+    elif mode == "tracklets":
+        subject_idx = select_r_less(hits, thr=300)
+        # stages = [
+        #     {"thr": 2},  # 0: merge
+        #     {"thr": 0.6},  # 1: extend
+        #     {"thr": 1, "thr_extend_0": 3, "thr_extend_1": 0.6},  # 2: merge + extend
+        #     {"thr": 0.5},  # 3: extend
+        #     {"thr": 1, "thr_extend_0": 1, "thr_extend_1": 0.5},  # 4: merge + extend
+        #     {"thr": 0.5},  # 5: extend
+        # ]
+        # stages = [
+        #     {"thr": 3},  # 0: merge
+        #     {"thr": 0.6},  # 1: extend
+        #     {"thr": 2, "thr_extend_0": 3, "thr_extend_1": 0.6},  # 2: merge + extend
+        #     {"thr": 0.5},  # 3: extend
+        #     {"thr": 1, "thr_extend_0": 1, "thr_extend_1": 0.5},  # 4: merge + extend
+        #     {"thr": 0.5},  # 5: extend
+        # ]
+        stages = [
+            {"thr": 6},  # 0: merge
+            {"thr": 0.6},  # 1: extend
+            {"thr": 3, "thr_extend_0": 3, "thr_extend_1": 0.6},  # 2: merge + extend
+            {"thr": 0.5},  # 3: extend
+            {"thr": 2, "thr_extend_0": 1, "thr_extend_1": 0.5},  # 4: merge + extend
+            {"thr": 0.5},  # 5: extend
+        ]
+    else:
+        raise ValueError(f"Mode {mode} not supported.")
 
     model = get_model(preload=not new_model, save=do_export, dir=MODELS_ROOT)
     logger.info("Model loaded")
@@ -80,11 +112,11 @@ def run(
     # Generate tracks for each hit as seed
     thr: float = 0.85
 
-    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: generator(hits, thr, module_id, preds, do_redraw=True), force_fallback=not preload, do_save=do_export)  # type: ignore
+    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: get_all_paths(hits, thr, module_id, preds, do_redraw=True, subject_idx=subject_idx), force_fallback=not preload, do_save=do_export)  # type: ignore
     logger.info(f"{mode} loaded")
 
     # calculate track's confidence
-    scores: npt.NDArray = cached(f"scores_{mode}_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: get_track_scores(tracks_all), force_fallback=not preload, do_save=do_export)  # type: ignore
+    scores: npt.NDArray = cached(f"scores_{mode}_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: get_track_scores(tracks_all, subject_idx=subject_idx), force_fallback=not preload, do_save=do_export)  # type: ignore
     logger.info("Scores loaded")
 
     # Merge tracks
@@ -92,7 +124,15 @@ def run(
         f"merged_{mode}_{event_name}",
         dir=OUTPUT_DIR,
         fallback_func=lambda: run_merging(
-            tracks_all, scores, preds, multi_stage=True, module_id=module_id, log_evaluations=True, truth=event.truth
+            tracks_all,
+            scores,
+            preds,
+            multi_stage=True,
+            module_id=module_id,
+            log_evaluations=True,
+            truth=event.truth,
+            subject_idx=subject_idx,
+            stages=stages,
         ),
         force_fallback=not preload,
         do_save=do_export,

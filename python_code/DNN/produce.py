@@ -141,25 +141,43 @@ def redraw(
 
 
 # Checked
+# Ready for tracklets
 def get_all_paths(
     hits: pd.DataFrame,
     thr: float,
     module_id: npt.NDArray,
     preds: list[npt.NDArray],
     do_redraw: bool = True,
-    debug_limit: None | int = None,
+    debug_limit: int | None = None,
+    subject_idx: npt.NDArray | None = None,
 ) -> list[npt.NDArray]:
     """Generate all paths for all hits in the event as seeds. Returns list of hit_ids per seed."""
+
     tracks_all = []
     N = len(preds)
-    for index in tqdm(range(N), desc="Generating all paths", file=sys.stdout):
+    # If subjects are specified, only generate paths for those hits
+    skip_mask = np.zeros(N)
+    skip_mask[subject_idx] = 1  # subject_idx == None -> skip_mask = np.ones(N)
+
+    # Generate paths for all subjects
+    for index, mask in zip(tqdm(range(N), desc="Generating all paths", file=sys.stdout), skip_mask):
+        # Skip hits that are not in `only_idx`
+        if mask == 0:
+            # This hit not accepted by mask
+            hit_id = index + 1
+            tracks_all.append([hit_id])
+            continue
+
         # Limit number of paths for debugging time saving
         if debug_limit and index > debug_limit:
             continue
 
         # Shift hit_id -> index + 1 because hit_id starts at 1 and index starts at 0
         hit_id = index + 1
-        mask = np.ones(len(hits))
+
+        mask = np.zeros(len(hits))
+        mask[subject_idx] = 1  # subject_idx == None -> skip_mask = np.ones(N)
+
         path = get_path(hit_id, thr, mask, module_id, preds=preds)
 
         if do_redraw:
@@ -233,6 +251,7 @@ def get_leftovers(hit_index: int, tracks_all: list[npt.NDArray], merged_tracks: 
     return path
 
 
+# Should be ready for tracklets
 def merge_tracks(
     tracks_all: list[npt.NDArray],
     thr: int,
@@ -245,6 +264,7 @@ def merge_tracks(
     thr_extend_1: float | None = None,
     module_id=None,
     preds=None,
+    subject_idx: npt.NDArray | None = None,
     verbose: bool = True,
     debug=False,
 ):
@@ -261,15 +281,27 @@ def merge_tracks(
 
     # When debugging, start with seed index 0 for easier evaluation of path
     if debug:
-        ordered_by_score = [i for i in range(len(merged_tracks))]  # type: ignore
+        ordered_by_score = np.array([i for i in range(len(merged_tracks[subject_idx]))])  # type: ignore
+
+    subject_mask = np.zeros(len(merged_tracks))
+    subject_mask[subject_idx] = 1
 
     # Merge tracks by confidence
     for hit_index in tqdm(ordered_by_score, desc="Assigning track id's", file=sys.stdout):
+        # Skip not selected subjects
+        if subject_mask[hit_index] != 1:
+            continue
+
         # Get path from `hit_index` seed, filtered on hits that have not been assigned to a (merged) track yet
         leftovers_ids = get_leftovers(hit_index, tracks_all, merged_tracks)
 
         if do_extend and len(leftovers_ids) > thr_extend_0:  # type: ignore
-            leftovers_ids = extend_path(leftovers_ids, thr=thr_extend_1, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds)  # type: ignore
+            mask = 1 * (merged_tracks == 0) * subject_mask
+            leftovers_ids = extend_path(leftovers_ids, thr=thr_extend_1, mask=mask, module_id=module_id, preds=preds)  # type: ignore
+
+        if subject_idx is not None:
+            # Filter on subject hits
+            leftovers_ids = leftovers_ids[subject_mask[leftovers_ids] == 1]
 
         # If leftover track is long enough, assign track id
         if len(leftovers_ids) > thr:
@@ -287,7 +319,12 @@ def merge_tracks(
 
 
 # TODO: add comments
-def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False, last=False):
+# Should be ready for tracklets
+def extend_tracks(
+    merged_tracks, thr, module_id, preds, check_modulus=False, last=False, subject_idx: npt.NDArray | None = None
+):
+    subject_mask = np.zeros(len(merged_tracks))
+    subject_mask[subject_idx] = 1
     # Go over all previously assigned tracks
     for track_id in tqdm(range(1, int(merged_tracks.max()) + 1), "Extending tracks", file=sys.stdout):
         # Select hits that belong to current track id
@@ -301,9 +338,8 @@ def extend_tracks(merged_tracks, thr, module_id, preds, check_modulus=False, las
         if check_modulus and len(path_ids) % 2 != 0:
             continue
 
-        path_ids = extend_path(
-            path_ids=path_ids, thr=thr, mask=1 * (merged_tracks == 0), module_id=module_id, preds=preds, last=last
-        )
+        mask = 1 * (merged_tracks == 0) * subject_mask
+        path_ids = extend_path(path_ids=path_ids, thr=thr, mask=mask, module_id=module_id, preds=preds, last=last)
         path_indices = path_ids - 1
         merged_tracks[path_indices] = track_id
     return merged_tracks
@@ -318,6 +354,15 @@ def run_merging(
     module_id: npt.NDArray | None = None,
     log_evaluations=True,
     truth: pd.DataFrame | None = None,
+    subject_idx: npt.NDArray | None = None,
+    stages=[
+        {"thr": 6},  # 0: merge
+        {"thr": 0.6},  # 1: extend
+        {"thr": 3, "thr_extend_0": 3, "thr_extend_1": 0.6},  # 2: merge + extend
+        {"thr": 0.5},  # 3: extend
+        {"thr": 2, "thr_extend_0": 1, "thr_extend_1": 0.5},  # 4: merge + extend
+        {"thr": 0.5},  # 5: extend
+    ],
 ):
     # merge tracks by confidence and get score
     if log_evaluations and truth is None:
@@ -327,52 +372,81 @@ def run_merging(
     ordered_by_score = np.argsort(scores)[::-1]
 
     if not multi_stage:
-        merged_tracks, _ = merge_tracks(tracks_all=tracks_all, thr=3, ordered_by_score=ordered_by_score)
+        merged_tracks, _ = merge_tracks(
+            thr=3,
+            tracks_all=tracks_all,
+            ordered_by_score=ordered_by_score,
+            subject_idx=subject_idx,
+        )
         evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
         return merged_tracks
 
     # multistage
+    # Stage 0: merge
     max_track_id = 0
     merged_tracks, max_track_id = merge_tracks(
-        tracks_all=tracks_all, thr=6, ordered_by_score=ordered_by_score, max_track_id=max_track_id
+        **stages[0],
+        tracks_all=tracks_all,
+        ordered_by_score=ordered_by_score,
+        max_track_id=max_track_id,
+        subject_idx=subject_idx,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
-    merged_tracks = extend_tracks(merged_tracks, thr=0.6, module_id=module_id, preds=preds)
+    # Stage 1: extend
+    merged_tracks = extend_tracks(
+        **stages[1],
+        merged_tracks=merged_tracks,
+        module_id=module_id,
+        preds=preds,
+        subject_idx=subject_idx,
+    )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
+    # Stage 2: merge + extend
     merged_tracks, max_track_id = merge_tracks(
+        **stages[2],
         tracks_all=tracks_all,
-        thr=3,
         ordered_by_score=ordered_by_score,
         merged_tracks=merged_tracks,
         max_track_id=max_track_id,
         do_extend=True,
-        thr_extend_0=3,
-        thr_extend_1=0.6,
         module_id=module_id,
         preds=preds,
+        subject_idx=subject_idx,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
-    merged_tracks = extend_tracks(merged_tracks, 0.5, module_id, preds)
+    # Stage 3: extend
+    merged_tracks = extend_tracks(
+        **stages[3], merged_tracks=merged_tracks, module_id=module_id, preds=preds, subject_idx=subject_idx
+    )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
+    # Stage 4: merge + extend
     merged_tracks, max_track_id = merge_tracks(
+        **stages[4],
         tracks_all=tracks_all,
-        thr=2,
         ordered_by_score=ordered_by_score,
         merged_tracks=merged_tracks,
         max_track_id=max_track_id,
         do_extend=True,
-        thr_extend_0=1,
-        thr_extend_1=0.5,
         module_id=module_id,
         preds=preds,
+        subject_idx=subject_idx,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
-    merged_tracks = extend_tracks(merged_tracks, 0.5, module_id, preds, check_modulus=True, last=True)
+    # Stage 5: extend
+    merged_tracks = extend_tracks(
+        **stages[5],
+        merged_tracks=merged_tracks,
+        module_id=module_id,
+        preds=preds,
+        check_modulus=True,
+        last=True,
+        subject_idx=subject_idx,
+    )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     return merged_tracks

@@ -7,19 +7,34 @@ from data_exploration.helpers import get_logger  # type: ignore
 
 
 # Checked
+# Ready for tracklets
 def get_track_scores(
-    tracks_all: list[npt.NDArray], factor: int = 8, limit: int | None = None, index_shift=1
+    tracks_all: list[npt.NDArray],
+    factor: int = 8,
+    limit: int | None = None,
+    index_shift=1,
+    subject_idx: npt.NDArray | None = None,
 ) -> npt.NDArray:
     """Generate confidence score for each track."""
     scores = np.zeros(len(tracks_all))
 
-    if limit is not None:
-        track_selection = tracks_all[:limit]
+    track_selection = tracks_all
+
+    # Select subject tracks
+    if subject_idx is None:
+        subject_idx = np.arange(len(track_selection))
     else:
-        track_selection = tracks_all
+        scores = -np.inf * np.ones(len(scores))
+        scores[subject_idx] = 0
+        track_selection = np.array(track_selection, dtype=object)[subject_idx]
+    if limit is not None:
+        track_selection = track_selection[:limit]
 
     for seed_index, path_ids in tqdm(
-        enumerate(track_selection), total=len(tracks_all), desc="Generating track scores", file=sys.stdout
+        zip(subject_idx, track_selection),
+        total=len(track_selection),
+        desc="Generating track scores",
+        file=sys.stdout,
     ):
         n_hits = len(path_ids)
 
