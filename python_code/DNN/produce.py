@@ -49,7 +49,7 @@ def get_path(
             p = retrieve_predict(hit_id_last, preds)
         else:
             if features is None or hits is None or model is None:
-                raise ValueError("Either preds or features and truth must be provided")
+                raise ValueError("Either preds or (features & hits & model) must be provided")
 
             p = make_predict(model=model, features=features, hits=hits, hit_id=hit_id_last, thr=thr)
 

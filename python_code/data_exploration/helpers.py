@@ -27,8 +27,10 @@ def setup_custom_logger(name=None, dir=LOG_DIR, tag="", level=logging.DEBUG) -> 
 
     tag_str = f"_{tag}" if tag else ""
 
-    handler = logging.FileHandler(dir + f"log{tag_str}_{datetime_str()}.txt", mode="w")
-    print(f"Saving log to `{dir}log{tag_str}_{datetime_str()}.txt`")
+    _datetime_str = datetime_str()
+
+    handler = logging.FileHandler(dir + f"log{tag_str}_{_datetime_str}.txt", mode="w")
+    print(f"Saving log to `{dir}log{tag_str}_{_datetime_str}.txt`")
     handler.setFormatter(formatter)
     screen_handler = logging.StreamHandler(stream=sys.stdout)
     screen_handler.setFormatter(formatter)
@@ -43,7 +45,12 @@ def get_logger(name=None, **kwargs) -> logging.Logger:
     """Gets a logger with the given name, or creates one if it does not exist."""
     logger = logging.getLogger(name)
     if len(logger.handlers) == 0:
-        return setup_custom_logger(name, **kwargs)
+        tag = kwargs.pop("tag", None)
+        if tag is None:
+            import __main__
+
+            tag = __main__.__file__.split("/")[-1]
+        return setup_custom_logger(name, tag=tag, **kwargs)
     return logger
 
 
@@ -180,6 +187,8 @@ def save(return_object, name: str | None = None, tag: str | None = None, dir: st
 
     if tag is not None:
         tag = f"_{tag}"
+    else:
+        tag = ""
     folder_message = f" in folder `{dir}`" if dir else " in current folder."
 
     time = datetime_str()
@@ -189,7 +198,7 @@ def save(return_object, name: str | None = None, tag: str | None = None, dir: st
         return_object.to_csv(f"{dir}{name}{tag}_{time}.{extension}")
     else:
         raise ValueError(f"File extension {extension} not supported.")
-    get_logger().info(f"Saved `{name} ({object_type})` as `{name}{tag}_{time}.{extension}`{folder_message}")
+    get_logger().info(f"Saved `{name}` ({object_type}) as `{name}{tag}_{time}.{extension}`{folder_message}")
 
     return return_object
 
@@ -294,6 +303,33 @@ def cached(
     )
 
 
+def retry(
+    func: Callable,
+    n_retries: int = 3,
+    sleep_time: int = 1,
+    exception: Exception | type[Exception] | None = None,
+    fallback_func: Callable | None = None,
+):
+    """Retry a function `n_retries` times with `sleep_time` seconds in between."""
+    if exception is None:
+        exception = Exception
+
+    for i in range(n_retries):
+        try:
+            return func()
+        except exception as exc:  # type: ignore
+            get_logger().debug(
+                f"Failed to run function `{func.__qualname__}` ({exc}). Retrying in {sleep_time} seconds ({i+1}/{n_retries})..."
+            )
+
+            if fallback_func is not None:
+                get_logger().debug(f"Running fallback function `{fallback_func.__qualname__}`")
+                fallback_func()
+
+            time.sleep(sleep_time)
+    raise exception
+
+
 def add_r(combined: DataFrame, mode="truth"):
     if mode == "truth":
         labels = ["tx", "ty", "tz"]
@@ -316,3 +352,55 @@ def select_r_less(hits: DataFrame, thr: float = 300):
     """Return indices of hits with r < `thr`."""
     inner_idx = np.where(add_r(hits, mode="hits")["r"] < thr)[0]
     return inner_idx
+
+
+def extend_features(r_0: DataFrame):
+    assert "r" in r_0, "r not in DataFrame"
+
+    r_0.rename(
+        columns={
+            "hit_id": "hit_id_0",
+            "r": "r_0",
+            "tx": "x_0",
+            "ty": "y_0",
+            "tz": "z_0",
+            "tpx": "px_0",
+            "tpy": "py_0",
+            "tpz": "pz_0",
+            "weight": "weight_0",
+        },
+        inplace=True,
+    )
+    r_0["p_0"] = np.sqrt(r_0["px_0"] ** 2 + r_0["py_0"] ** 2 + r_0["pz_0"] ** 2)
+    r_0["p_t_0"] = np.sqrt(r_0["px_0"] ** 2 + r_0["py_0"] ** 2)
+    r_0["log_10_p_t_0"] = np.log10(r_0["p_t_0"])
+    r_0["phi_0"] = np.arctan2(r_0["y_0"], r_0["x_0"])
+    r_0["theta_0"] = np.arccos(r_0["z_0"] / r_0["r_0"])
+    r_0["pseudo_rapidity_0"] = -np.log(np.tan(r_0["theta_0"] / 2))
+    return r_0
+
+
+def binning_analysis(samples):
+    """Perform a binning analysis over samples and return
+    errors: an array of the error estimate at each binning level,
+    tau: the estimated integrated autocorrelation time,
+    converged: a flag indicating if the binning has converged, and
+    bins: the last bin values"""
+    minbins = 2**6  # minimum number of bins
+    maxlevel = int(np.log2(len(samples) / minbins))  # number of binning steps
+    maxsamples = minbins * 2 ** (maxlevel)  # the maximal number of samples considered
+    bins = np.array(samples[-maxsamples:])
+    errors = np.zeros(maxlevel + 1)
+    for k in range(maxlevel):
+        errors[k] = np.std(bins) / np.sqrt(len(bins) - 1.0)
+        bins = np.array((bins[::2] + bins[1::2]) / 2.0)
+
+    errors[maxlevel] = np.std(bins) / np.sqrt(len(bins) - 1.0)
+    tau = 0.5 * ((errors[-1] / errors[0]) ** 2 - 1.0)
+    relchange = (errors[1:] - errors[:-1]) / errors[1:]
+    meanlastchanges = np.mean(relchange[-3:])  # get the average over last changes
+    converged = 1
+    if meanlastchanges > 0.05:
+        print("warning: binning maybe not converged, meanlastchanges:", meanlastchanges)
+        converged = 0
+    return (errors, tau, converged, bins)

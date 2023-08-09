@@ -13,26 +13,29 @@ from model import get_model
 from test import show_test  # type: ignore
 from data_exploration.helpers import get_logger, datetime_str, find_file, save, cached, select_r_less  # type: ignore
 from data_exploration.visualize import plot_prediction
+from data_exploration.event import Event
 from trackml.score import score_event
 from features import get_featured_event, get_module_id
 from predict import make_predict_matrix
 from produce import get_all_paths, run_merging
 from score import get_track_scores, score_event_fast
 
-from dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR
+from dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR, DATA_SAMPLE, DATA_1
 
 
 def run(
     event_name: str = "event000001001",
     new_model=False,
-    mode="tracklets",
+    mode="tracks",
+    reduce=0.05,
     preload=True,
     do_export=True,
     batch_size=20000,
     do_test: bool = False,
     repeats=20,
     n_test=1,
-    pick_random=False,
+    pick_random=True,
+    seed=0,
     animate=False,
     dir=OUTPUT_DIR,
     verbose=True,
@@ -48,7 +51,13 @@ def run(
     logger.debug(tf.config.list_physical_devices("GPU"))
 
     # Load event and extract required data for prediction
-    event = get_featured_event(event_name)
+    event: Event = get_featured_event(
+        event=Event(dir=DATA_1, event_name=event_name).reduce(fraction=reduce, random=pick_random, seed=seed)
+    )
+
+    if reduce is not None:
+        save(event.truth, f"truth_{event_name}_reduced_{reduce}", dir=dir, save=do_export, extension="csv")
+
     hits = event.hits
     module_id = get_module_id(hits)
 
@@ -102,7 +111,7 @@ def run(
 
     preds: list[npt.NDArray] = cached(
         f"preds_{event_name}",
-        dir=OUTPUT_DIR,
+        dir=dir,
         fallback_func=lambda: make_predict_matrix(model, event.features, batch_size=batch_size),
         force_fallback=not preload,
         do_save=do_export,
@@ -112,17 +121,17 @@ def run(
     # Generate tracks for each hit as seed
     thr: float = 0.85
 
-    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: get_all_paths(hits, thr, module_id, preds, do_redraw=True, subject_idx=subject_idx), force_fallback=not preload, do_save=do_export)  # type: ignore
+    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=dir, fallback_func=lambda: get_all_paths(hits, thr, module_id, preds, do_redraw=True, subject_idx=subject_idx), force_fallback=not preload, do_save=do_export)  # type: ignore
     logger.info(f"{mode} loaded")
 
     # calculate track's confidence
-    scores: npt.NDArray = cached(f"scores_{mode}_{event_name}", dir=OUTPUT_DIR, fallback_func=lambda: get_track_scores(tracks_all, subject_idx=subject_idx), force_fallback=not preload, do_save=do_export)  # type: ignore
+    scores: npt.NDArray = cached(f"scores_{mode}_{event_name}", dir=dir, fallback_func=lambda: get_track_scores(tracks_all, subject_idx=subject_idx), force_fallback=not preload, do_save=do_export)  # type: ignore
     logger.info("Scores loaded")
 
     # Merge tracks
     merged_tracks: npt.NDArray = cached(
         f"merged_{mode}_{event_name}",
-        dir=OUTPUT_DIR,
+        dir=dir,
         fallback_func=lambda: run_merging(
             tracks_all,
             scores,
@@ -142,7 +151,7 @@ def run(
     # Save submission
     submission: pd.DataFrame = cached(
         f"submission_{mode}_{event_name}",
-        dir=OUTPUT_DIR,
+        dir=dir,
         fallback_func=lambda: pd.DataFrame({"event_id": event_id, "hit_id": hits.hit_id, "track_id": merged_tracks}),
         force_fallback=not preload,
         do_save=do_export,

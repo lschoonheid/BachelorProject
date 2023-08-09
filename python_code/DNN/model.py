@@ -18,8 +18,12 @@ from tqdm import tqdm
 import numpy.typing as npt
 import pandas as pd
 from dirs import MODELS_ROOT, LOG_DIR, OUTPUT_DIR
-from data_exploration.helpers import datetime_str, get_logger, pickle_cache, find_filenames
-from features import get_particle_ids, get_featured_event  # type: ignore
+from data_exploration.helpers import datetime_str, get_logger, pickle_cache, find_filenames, retry
+
+if __name__ == "__main__":
+    from features import get_particle_ids, get_featured_event  # type: ignore
+else:
+    from .features import get_particle_ids, get_featured_event
 
 # Hyperparameters
 N_EVENTS = 100
@@ -200,16 +204,22 @@ def do_train(
     model.compile(loss=[loss_function], optimizer=Adam(learning_rate=10**lr_exp), metrics=["accuracy"])
 
     # Train model
-    History = model.fit(
-        x=Train[:, :-1],  # type: ignore
-        y=Train[:, -1],  # type: ignore
-        batch_size=batch_size,
-        initial_epoch=epochs_passed,
-        epochs=epochs + epochs_passed,
-        verbose=2,  # type: ignore
-        validation_split=validation_split,
-        shuffle=True,
-        callbacks=callbacks,
+    # Retry in case of memory error (leave some time for memory to be freed)
+    History = retry(
+        func=lambda: model.fit(
+            x=Train[:, :-1],  # type: ignore
+            y=Train[:, -1],  # type: ignore
+            batch_size=batch_size,
+            initial_epoch=epochs_passed,
+            epochs=epochs + epochs_passed,
+            verbose=2,  # type: ignore
+            validation_split=validation_split,
+            shuffle=True,
+            callbacks=callbacks,
+        ),
+        fallback_func=lambda: tf.compat.v1.keras.backend.clear_session(),
+        n_retries=5,
+        sleep_time=300,
     )
     tf.compat.v1.keras.backend.clear_session()
     kb.clear_session()

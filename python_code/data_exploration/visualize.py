@@ -8,7 +8,7 @@ from random import sample as random_sample
 from tqdm import tqdm
 
 from .constants import FIG_X, FIG_Y, FIG_DPI, DETECTOR_KEYS, HITS_SAMPLES, TABLE_INDEX, PLOT_FONTSIZE, FIG_EXTENSION
-from .helpers import get_event_names_str
+from .helpers import get_event_names_str, prepare_path
 
 # TODO:
 # [x] Charge distribution
@@ -87,28 +87,43 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
 
 
 def versus_scatter(
-    event_kv: dict[str, DataFrame], table_0: str, ax_0: str, table_1: str, ax_1: str, join_on: str = "hit_id"
+    event,
+    table_0: str,
+    ax_0: str,
+    table_1: str,
+    ax_1: str,
+    join_on: str = "hit_id",
+    xlim=None,
+    ylim=None,
+    **kwargs,
 ):
     """Plot a scatter of two tables versus each other"""
     # Create figure
     fig = plt.figure(figsize=(FIG_X, FIG_Y))
     ax_title_str = f"{table_0} {ax_0} vs {table_1} {ax_1}"
 
-    # Choose tables
-    df_0 = event_kv[table_0]
-    df_1 = event_kv[table_1]
-
     # Merge columns
-    merged = df_0.merge(df_1, on=join_on)[[ax_0, ax_1]]
+    if table_0 != table_1:
+        # Choose tables
+        df_0 = event[table_0]
+        df_1 = event[table_1]
+        merged = df_0.merge(df_1, on=join_on)[[ax_0, ax_1]]
+    else:
+        merged = event[table_0][[ax_0, ax_1]]
 
     # Choose axes
     ax = fig.add_subplot()
     ax.set_xlabel(ax_0)
     ax.set_ylabel(ax_1)
 
-    scatter = ax.scatter(merged[ax_0], merged[ax_1], s=0.1)
+    scatter = ax.scatter(merged[ax_0], merged[ax_1], s=0.1, **kwargs)
 
     ax.set_title(f"Scatter plot of { ax_title_str }")
+
+    if xlim:
+        ax.set_xlim(xlim)
+    if ylim:
+        ax.set_ylim(ylim)
 
     return fig
 
@@ -509,12 +524,30 @@ def plot_prediction(
     return fig
 
 
+def get_range(
+    data: list[DataFrame],
+    variable: str,
+    min: float | None = None,  # type: ignore
+    max: float | None = None,  # type: ignore
+):
+    # Find range
+    if min is None:
+        mins: list[float] = [df[variable].min() for df in data]
+        min: float = np.min(mins)
+    if max is None:
+        maxs: list[float] = [df[variable].max() for df in data]
+        max: float = np.max(maxs)
+    range: tuple[float, float] = (min, max)  # type: ignore
+    return range
+
+
 def compare_histograms(
     truth,
     test,
     variable: str,
     bins=100,
-    range: tuple[int, int] | None = None,
+    min: float | None = None,  # type: ignore
+    max: float | None = None,  # type: ignore
     density=False,
     title="",
     xlabel="x",
@@ -523,7 +556,8 @@ def compare_histograms(
     **kwargs,
 ):
     fig, ax = plt.subplots(figsize=figsize)
-    ax.hist([truth[variable], test[variable]], bins=bins, range=range, density=density, alpha=0.75, **kwargs)
+    range = get_range([truth, test], variable, min, max)
+    ax.hist(x=[truth[variable], test[variable]], bins=bins, range=range, density=density, alpha=0.75, **kwargs)
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -553,13 +587,8 @@ def fraction_histogram(
         labels = [f"df_{i}" for i in np.arange(len(data))]
 
     # Find range
-    if min is None:
-        mins: list[float] = [df[variable].min() for df in data]
-        min: float = np.min(mins)
-    if max is None:
-        maxs: list[float] = [df[variable].max() for df in data]
-        max: float = np.max(maxs)
-    range: tuple[float, float] = (min, max)  # type: ignore
+    range = get_range(data, variable, min, max)
+    (min, max) = range
 
     # Make histograms
     hists = [np.histogram(df[variable], bins=bins, range=range, density=density) for df in data]
@@ -608,17 +637,24 @@ def plot_efficiency(
 
     cut_truth = pd.cut(truth[variable], bins=bins_index)  # type: ignore
     groups_truth = truth.groupby(cut_truth)
-    binned_truth = groups_truth.count()[variable]
+    binned_truth_count = groups_truth.count()[variable]
 
     cut_test = pd.cut(test[variable], bins=bins_index)  # type: ignore
+    print(cut_test)
     groups_test = test.groupby(cut_test)
-    binned_test = groups_test.count()[variable]
+    binned_test_count = groups_test.count()[variable]
 
-    efficiency = binned_test / binned_truth
+    efficiency = binned_test_count / binned_truth_count
 
     fig, ax = plt.subplots(figsize=figsize)
     x = np.arange(min_bin, max_bin, (max_bin - min_bin) / bins)
-    yerr = np.sqrt(binned_test) / binned_truth
+    yvariance = ((binned_test_count + 1) * (binned_test_count + 2)) / (
+        (binned_truth_count + 2) * (binned_truth_count + 3)
+    ) - ((binned_test_count + 1) ** 2) / ((binned_truth_count + 2) ** 2)
+    yerr = np.sqrt(yvariance)
+    # yerr = groups_test.std()[variable] / (np.sqrt(binned_test_count))
+    # yerr = np.sqrt(binned_test_count) / binned_truth_count
+
     ax.plot(x, efficiency.values, label=ylabel, **kwargs)
     ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label="Error")
     ax.set_ylim(0, 1)
@@ -630,8 +666,10 @@ def plot_efficiency(
     return fig
 
 
-def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir=""):
+def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="", bins=100):
     """Evaluate the submission by plotting histograms and efficiencies."""
+
+    prepare_path(dir)
 
     tag_str = f"_{tag}" if tag else ""
 
@@ -661,12 +699,14 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
 
     # Plot serperately
     for match_type_str, matches in zip(match_types_str, match_types):
-        for variable, label in zip(variables_str, var_labels):
+        for variable, label, min, max in zip(variables_str, var_labels, mins, maxs):
             fig = compare_histograms(
                 particles,
                 matches,
                 variable=variable,
-                bins=100,
+                bins=bins,
+                min=min,
+                max=max,
                 title=f"Track {label}",
                 xlabel=label,
                 ylabel="Frequence",
@@ -684,7 +724,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
                 particles,
                 matches,
                 variable=variable,
-                bins=100,
+                bins=bins,
                 min=min,
                 max=max,
                 xlabel=label,
@@ -697,7 +737,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
             particles,
             matches,
             variable="r_0",
-            bins=100,
+            bins=bins,
             min=0,
             max=100,
             xlabel="zoom vertex $r_0$ [mm]",
@@ -711,7 +751,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
             match_types,
             variable=variable,
             labels=match_types_str,
-            bins=100,
+            bins=bins,
             min=min,
             max=max,
             title=f"Track {label}",
@@ -726,7 +766,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
         match_types,
         variable="r_0",
         labels=match_types_str,
-        bins=100,
+        bins=bins,
         min=0,
         max=100,
         title=f"Track $r_0$",

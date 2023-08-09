@@ -7,9 +7,11 @@ from pandas import DataFrame, Series
 from tqdm import tqdm
 
 # Local imports
+from efficiency import extend_features
 from .constants import DATA_SAMPLE, FIG_DPI, FIG_EXTENSION, TABLE_INDEX
-from .helpers import get_event_names, load_event_cached
-from .visualize import parameter_distribution, histogram
+from .helpers import get_event_names, load_event_cached, select_r_0
+from .visualize import parameter_distribution, histogram, versus_scatter
+from .event import Event
 
 
 def run(
@@ -33,6 +35,18 @@ def run(
     ]
 
     weight_tag = f"{weight_method}" if weight_method else ""
+
+    do_p_vs_r0 = True
+    if do_p_vs_r0:
+        for event in n_events:
+            event = Event(loaded_event=event)
+            event.__dict__["r_0"] = extend_features(select_r_0(event.truth))
+            x_str = "r_0"
+            # y_str = "tz"
+            y_str = "p_0"
+            fig = versus_scatter(event.__dict__, "r_0", x_str, "r_0", y_str, ylim=(0, 25), xlim=(500, 1000))
+            fig.savefig(f"{'truth'}_{x_str}_versus_{'truth'}_{y_str}_scatter_event{FIG_EXTENSION}", dpi=FIG_DPI)
+            plt.close()
 
     # Number of particles per event
     if do_n_particles:

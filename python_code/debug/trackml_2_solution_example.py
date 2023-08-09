@@ -18,11 +18,11 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from data_exploration.visualize import generate_track_fig, add_track_to_fig
-from classes.event import Event
+from event import Event
 from data_exploration.helpers import datetime_str, find_file, save, pickle_cache
 from data_exploration.visualize import plot_prediction, plot_efficiency
 from trackml.score import score_event
-from helpers import setup_custom_logger # type: ignore
+from helpers import setup_custom_logger  # type: ignore
 
 DIRECTORY = "/data/atlas/users/lschoonh/BachelorProject/"
 DATA_ROOT = DIRECTORY + "data/"

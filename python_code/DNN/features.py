@@ -3,7 +3,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from data_exploration.helpers import pickle_cache
-from classes.event import Event
+from data_exploration.event import Event
 from dirs import DATA_SAMPLE
 
 
@@ -48,8 +48,12 @@ def get_features(event: Event) -> npt.NDArray:
 
 
 @pickle_cache
-def get_featured_event(event_name: str) -> Event:
-    event = Event(DATA_SAMPLE, event_name, feature_generator=get_features)
+def get_featured_event(event_name: str | None = None, event: Event | None = None) -> Event:
+    if event is None:
+        event = Event(DATA_SAMPLE, event_name, feature_generator=get_features)
+    else:
+        event.feature_generator = get_features
+
     # Call features, so that they are cached
     f_cache = event.features
     return event

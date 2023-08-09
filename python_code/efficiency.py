@@ -5,11 +5,12 @@ from pandas import DataFrame
 from trackml.dataset import load_event_truth
 
 from data_exploration.constants import DIRECTORY, DATA_SAMPLE
-from data_exploration.helpers import find_files
+from data_exploration.helpers import find_file, find_files, prepare_path, add_r, select_r_0, extend_features
 from data_exploration.visualize import compare_histograms, evaluate_submission
+from dirs import OUTPUT_DIR, PLOT_PATH
 
 
-def get_truth(submission: DataFrame, truth_dir: str = DATA_SAMPLE):
+def get_truth(submission: DataFrame, truth_dir: str = DATA_SAMPLE, output_dir: str = OUTPUT_DIR):
     """Link truth data with submission data."""
     # Assert one event
     event_id = submission["event_id"].unique()
@@ -19,7 +20,10 @@ def get_truth(submission: DataFrame, truth_dir: str = DATA_SAMPLE):
     event_name = event_name[: -len(str(event_id[0]))] + str(event_id[0])
 
     # Load truth data
-    truth = load_event_truth(DATA_SAMPLE + event_name)
+    # First try to load from output_dir, where reduced truth data is stored
+    truth = find_file(f"truth_{event_name}", dir=output_dir, extension="csv")
+    if truth is None:
+        truth = load_event_truth(DATA_SAMPLE + event_name)
 
     # # Link together
     # combined: DataFrame = submission.merge(truth, how="right", on="hit_id")
@@ -137,61 +141,21 @@ def add_purities(
     return good_pairs
 
 
-def add_r(combined: DataFrame, mode="truth"):
-    if mode == "truth":
-        labels = ["tx", "ty", "tz"]
-    else:
-        labels = ["x", "y", "z"]
-    r = np.sqrt(np.sum(combined[labels].values ** 2, axis=1))
-    copy = combined.copy()
-    copy.insert(4, "r", r)
-    return copy
-
-
-def select_r_0(combined: DataFrame):
-    r_sorted = add_r(combined).sort_values("r", ascending=True)
-    r_mask = r_sorted[r_sorted.duplicated(subset="particle_id", keep="first")]
-    r_0 = r_sorted[~r_sorted.index.isin(r_mask.index)]  # .rename(columns={"r": "r_0"})
-    return r_0
-
-
-def extend_features(r_0: DataFrame):
-    assert "r" in r_0, "r not in DataFrame"
-
-    r_0.rename(
-        columns={
-            "hit_id": "hit_id_0",
-            "r": "r_0",
-            "tx": "x_0",
-            "ty": "y_0",
-            "tz": "z_0",
-            "tpx": "px_0",
-            "tpy": "py_0",
-            "tpz": "pz_0",
-            "weight": "weight_0",
-        },
-        inplace=True,
-    )
-    r_0["p_0"] = np.sqrt(r_0["px_0"] ** 2 + r_0["py_0"] ** 2 + r_0["pz_0"] ** 2)
-    r_0["p_t_0"] = np.sqrt(r_0["px_0"] ** 2 + r_0["py_0"] ** 2)
-    r_0["log_10_p_t_0"] = np.log10(r_0["p_t_0"])
-    r_0["phi_0"] = np.arctan2(r_0["y_0"], r_0["x_0"])
-    r_0["theta_0"] = np.arccos(r_0["z_0"] / r_0["r_0"])
-    r_0["pseudo_rapidity_0"] = -np.log(np.tan(r_0["theta_0"] / 2))
-    return r_0
-
-
 if __name__ == "__main__":
     min_hits = 4
 
-    submissions = find_files("submission_", dir=DIRECTORY, extension="pkl")
+    submissions = find_files("submission_", dir=OUTPUT_DIR, extension="pkl")
+
+    if len(submissions) == 0:
+        print("No submissions found")
+        exit(1)
 
     particles_list = []
     considered_pairs_list = []
     for submission in submissions:
         assert "event_id" in submission, "Submission does not contain event_id"
 
-        truth = get_truth(submission)
+        truth = get_truth(submission, output_dir=OUTPUT_DIR)
         pairs = get_pairs(submission, truth)
 
         considered_particles = select_particles(pairs, min_hits=min_hits)
@@ -217,4 +181,10 @@ if __name__ == "__main__":
     n_events = len(submissions)
 
     # Plot evaluations
-    evaluate_submission(all_considered_particles_extended, all_considered_pairs_extended, tag=f"{n_events}_events")
+    evaluate_submission(
+        all_considered_particles_extended,
+        all_considered_pairs_extended,
+        tag=f"{n_events}_events",
+        dir=PLOT_PATH,
+        bins=100,
+    )

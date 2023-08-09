@@ -7,8 +7,8 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 
-from classes.event import Event
 from data_exploration.visualize import plot_prediction
+from data_exploration.event import Event
 from features import get_module_id
 from produce import get_path
 
