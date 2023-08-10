@@ -58,6 +58,27 @@ def get_colors(data: DataFrame, mode: str = "volume_layer"):
             raise ValueError("Mode not recognized")
 
 
+def get_crop(x, y, crop: float, square=False) -> tuple[tuple[float, float], tuple[float, float]]:
+    x_range = min(x), max(x)
+    x_middle = (x_range[0] + x_range[1]) / 2
+    x_span: float = x_range[1] - x_range[0]
+
+    y_range = min(y), max(y)
+    y_middle = (y_range[0] + y_range[1]) / 2
+    y_span: float = y_range[1] - y_range[0]
+
+    max_span = max(x_span, y_span)
+    if square:
+        x_span = max_span
+        y_span = max_span
+
+    # lim = middle - crop * span / 2, middle + crop * span /2
+    xlim: tuple[float, float] = x_middle - crop * x_span / 2, x_middle + crop * x_span / 2
+    ylim: tuple[float, float] = y_middle - crop * y_span / 2, y_middle + crop * y_span / 2
+
+    return xlim, ylim
+
+
 def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
     """Plot a scatter plot of the hits in either 2D or 3D"""
     # Create figure
@@ -794,3 +815,21 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
     [ax.set_xticks([]) for ax in fig.axes]
     fig.savefig(dir + f"fractions_track_purity_histogram{tag_str}.jpg", dpi=600)
     plt.close()
+
+
+def plot_fit(X, Y, Z, x_new, y_new, z_new, vaxis: str, crop=2, **kwargs):
+    assert vaxis.lower() in ["x", "y"], "vaxis must be either 'x' or 'y'"
+    v_plot = Y if vaxis == "y" else X
+    v_new_plot = y_new if vaxis == "y" else x_new
+
+    zlim, vlim = get_crop(Z, v_plot, crop=crop)
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.plot(Z, v_plot, "o", **kwargs)
+    ax.plot(z_new, v_new_plot, "r--", label="poly fit")
+    ax.set_xlim(zlim)
+    ax.set_ylim(*vlim)
+    ax.set_xlabel("z")
+    ax.set_ylabel(vaxis)
+    ax.legend()
+    return fig, ax

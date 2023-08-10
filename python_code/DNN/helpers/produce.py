@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from .features import mask_same_module
 from .predict import retrieve_predict, make_predict
+from .fit import get_validator
 from .score import evaluate_tracks
 
 from .dirs import *
@@ -91,6 +92,109 @@ def get_path(
             break
         # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
         path_indices.append(a.argmax())  # type: ignore
+
+    # Convert indices back to hit_ids by adding 1
+    return np.array(path_indices) + 1
+
+
+def get_path_smart(
+    hit_id: int,
+    thr: float,
+    mask: npt.NDArray,
+    module_id: npt.NDArray,
+    skip_same_module: bool = True,
+    preds: list[npt.NDArray] | None = None,
+    features: npt.NDArray | None = None,
+    hits: pd.DataFrame | None = None,
+    model: Model | None = None,
+    fit=False,
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
+):
+    """Predict set of hits that belong to the same track as hit_id.
+    Returns list[hit_id].
+    """
+    # Verify correct input
+    if preds is None and features is not None and hits is not None:
+        raise ValueError("Either preds or features and truth must be provided")
+    if fit and hits is None:
+        raise ValueError("hits must be provided if fit=True")
+
+    # Convert to index
+    hit_index = hit_id - 1
+    path_indices = [hit_index]
+    a = 0
+
+    validator = None
+    while True:
+        # Predict probability of each pair of hits with the last hit in the path
+        hit_id_last = path_indices[-1] + 1
+        if preds is not None:
+            p = retrieve_predict(hit_id_last, preds)
+        else:
+            if features is None or hits is None or model is None:
+                raise ValueError("Either preds or (features & hits & model) must be provided")
+
+            p = make_predict(model=model, features=features, hits=hits, hit_id=hit_id_last, thr=thr)
+
+        # When two points are added, we can build a helix and use it to validate the next point
+        if fit and len(path_indices) == 2:
+            x_2, y_2, z_2 = hits.iloc[path_indices][["x", "y", "z"]].values.T  # type: ignore
+            # Add origin
+            x_0, y_0, z_0 = 0, 0, 0
+            x_3 = np.append(x_2, x_0)
+            y_3 = np.append(y_2, y_0)
+            z_3 = np.append(z_2, z_0)
+
+            # Get validator
+            validator = get_validator(
+                x_3,  # type: ignore
+                y_3,  # type: ignore
+                z_3,  # type: ignore
+                abs_tolerance_line=abs_tolerance_line,
+                abs_tolerance_r=abs_tolerance_r,
+                abs_tolerance_trig=abs_tolerance_trig,
+                verbose=False,
+            )
+
+        # TODO
+        # p_ = p + diffs(p) * weight
+
+        # Generate mask of hits that have a probability above the threshold
+        mask = (p > thr) * mask
+        # Mask last added hit
+        mask[path_indices[-1]] = 0
+
+        if skip_same_module:
+            path_ids = np.array(path_indices) + 1
+            mask = mask_same_module(mask, path_ids, p, thr, module_id)
+
+        # `a` is the culuminative probability between each hit in the path
+        # At each step we look at the best candidate for the whole (previously geberate) track
+        a = (p + a) * mask
+
+        # TODO
+        # if validator(x,y)
+        if validator:
+            for i in range(100):
+                cand_idx = a.argmax()
+                x_t, y_t, z_t = hits.iloc[cand_idx][["x", "y", "z"]].values  # type: ignore
+                validation = validator(x_t, y_t, z_t)
+                validated = validation["validated"]
+                if not validated:
+                    a[cand_idx] = 0
+                    continue
+                else:
+                    break
+
+        # Breaking condition: if best average probability is below threshold, end path
+        if a.max() < thr * len(path_indices):
+            break
+
+        # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
+        path_indices.append(a.argmax())  # type: ignore
+
     # Convert indices back to hit_ids by adding 1
     return np.array(path_indices) + 1
 
@@ -244,7 +348,7 @@ def extend_path(
 def get_leftovers(hit_index: int, tracks_all: list[npt.NDArray], merged_tracks: npt.NDArray) -> npt.NDArray:
     """Get path from `hit_index` seed and select hits from that path that have not been assigned to a (merged) track yet."""
     path = np.array(tracks_all[hit_index])
-    path_indices = path - 1
+    path_indices = path - 1  # type: ignore
     # Select seeds in `path` that have not been assigned to a (merged) track yet
     empties = np.where(merged_tracks[path_indices] == 0)[0]
     path = path[empties]
