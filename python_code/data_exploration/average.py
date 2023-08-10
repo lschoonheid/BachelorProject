@@ -7,7 +7,7 @@ from pandas import DataFrame, Series
 from tqdm import tqdm
 
 # Local imports
-from efficiency import extend_features
+from data_exploration.helpers import extend_features
 from .constants import DATA_SAMPLE, FIG_DPI, FIG_EXTENSION, TABLE_INDEX
 from .helpers import get_event_names, load_event_cached, select_r_0
 from .visualize import parameter_distribution, histogram, versus_scatter

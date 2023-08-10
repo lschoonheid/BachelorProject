@@ -13,7 +13,7 @@ from numpy import load as load_numpy
 
 from trackml.dataset import load_event  # type: ignore
 from .constants import CACHE_LOC
-from dirs import LOG_DIR  # type: ignore
+from .dirs import LOG_DIR  # type: ignore
 
 import logging
 import sys
