@@ -36,6 +36,7 @@ def run(
     repeats=20,
     n_test=1,
     pick_random=True,
+    do_fit=False,
     seed=0,
     animate=False,
     dir=OUTPUT_DIR,
@@ -122,7 +123,7 @@ def run(
     # Generate tracks for each hit as seed
     thr: float = 0.85
 
-    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=dir, fallback_func=lambda: get_all_paths(hits, thr, module_id, preds, do_redraw=True, subject_idx=subject_idx), force_fallback=not preload, do_save=do_export)  # type: ignore
+    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=dir, fallback_func=lambda: get_all_paths(hits, thr, module_id, preds, do_redraw=True, subject_idx=subject_idx, fit=do_fit), force_fallback=not preload, do_save=do_export)  # type: ignore
     logger.info(f"{mode} loaded")
 
     # calculate track's confidence
@@ -142,6 +143,8 @@ def run(
             log_evaluations=True,
             truth=event.truth,
             subject_idx=subject_idx,
+            fit=do_fit,
+            hits=hits,
             stages=stages,
         ),
         force_fallback=not preload,
@@ -176,7 +179,8 @@ def run(
 
         # Show some tracks
         n_per_cycle = 10
-        for n_start in [0, 1000, 2000, 3000, 4000, 5000]:
+        # for n_start in [0, 1000, 2000, 3000, 4000, 5000]:
+        for n_start in [0, 50, 100, 150, 300]:
             for i in range(n_start, n_start + n_per_cycle):
                 # Show tracks
                 # Tracks are already ordered by score
@@ -229,6 +233,7 @@ if __name__ == "__main__":
 
     parser.add_argument("-e", dest="event_name", type=str, default="event000001001", help="Choose event name")
     parser.add_argument("-bs", dest="batch_size", type=int, default=20000, help="Choose batch_size")
+    parser.add_argument("-f", dest="do_fit", action="store_true", help="Run with fitting during track construction")
 
     args = parser.parse_args()
     kwargs = vars(args)

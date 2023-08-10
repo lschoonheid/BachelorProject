@@ -398,7 +398,7 @@ def get_validator(
     | tuple[NDArray, NDArray, NDArray],
     thr_collinear=1.0e-6,
     **kwargs
-):
+) -> Callable[[float, float, float], dict]:
     """Get validation function for a track in x, y, z plane.
 
     Input needs to be in the form of [(x1, x2, x3), (y1, y2, y3), (z1, z2, z3).

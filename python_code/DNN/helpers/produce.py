@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from typing import Callable
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -20,84 +21,117 @@ from .score import evaluate_tracks
 from .dirs import *
 
 
-# Checked
-def get_path(
-    hit_id: int,
-    thr: float,
+def validator_from_path_idx(
+    path_indices: list[int],
+    hits: pd.DataFrame,
+    abs_tolerance_line: float,
+    abs_tolerance_r: float,
+    abs_tolerance_trig: float,
+    **kwargs,
+) -> Callable[[float, float, float], dict]:
+    if len(path_indices) > 3:
+        path_indices_selection = path_indices[:3]
+    else:
+        path_indices_selection = path_indices
+
+    x_2, y_2, z_2 = hits.iloc[path_indices_selection][["x", "y", "z"]].values.T  # type: ignore
+    # Add origin
+    x_0, y_0, z_0 = 0, 0, 0
+    x_3 = np.append(x_2, x_0)
+    y_3 = np.append(y_2, y_0)
+    z_3 = np.append(z_2, z_0)
+
+    # Get validator
+    validator = get_validator(
+        x_3,  # type: ignore
+        y_3,  # type: ignore
+        z_3,  # type: ignore
+        abs_tolerance_line=abs_tolerance_line,
+        abs_tolerance_r=abs_tolerance_r,
+        abs_tolerance_trig=abs_tolerance_trig,
+        verbose=False,
+    )
+
+    return validator
+
+
+def path_add_one(
+    path_indices: list[int],
     mask: npt.NDArray,
+    a: float | npt.NDArray,
+    validator: Callable[[float, float, float], dict] | None,
+    thr: float,
     module_id: npt.NDArray,
     skip_same_module: bool = True,
     preds: list[npt.NDArray] | None = None,
     features: npt.NDArray | None = None,
     hits: pd.DataFrame | None = None,
     model: Model | None = None,
+    last=False,
+    fit: bool = False,
+    abs_tolerance_line: float = 10,
+    abs_tolerance_r: float = 10,
+    abs_tolerance_trig: float = 10,
+    **kwargs,
 ):
-    """Predict set of hits that belong to the same track as hit_id.
-    Returns list[hit_id].
-    """
-    # Verify correct input
-    if preds is None:
-        assert features is not None and hits is not None, "Either preds or features and truth must be provided"
+    if fit and hits is None:
+        raise ValueError("hits must be provided when fitting")
 
-    # Convert to index
-    hit_index = hit_id - 1
-    path_indices = [hit_index]
-    a = 0
-    while True:
-        # Predict probability of each pair of hits with the last hit in the path
-        hit_id_last = path_indices[-1] + 1
-        if preds is not None:
-            p = retrieve_predict(hit_id_last, preds)
-        else:
-            if features is None or hits is None or model is None:
-                raise ValueError("Either preds or (features & hits & model) must be provided")
+    # Predict probability of each pair of hits with the last hit in the path
+    hit_id_last = path_indices[-1] + 1
 
-            p = make_predict(model=model, features=features, hits=hits, hit_id=hit_id_last, thr=thr)
+    if preds is not None:
+        p = retrieve_predict(hit_id_last, preds)
+    else:
+        p = make_predict(model=model, features=features, hits=hits, hit_id=hit_id_last, thr=thr)  # type: ignore
 
+    if not last:
         # Generate mask of hits that have a probability above the threshold
         mask = (p > thr) * mask
-        # Mask last added hit
-        mask[path_indices[-1]] = 0
+    # Mask last added hit
+    mask[path_indices[-1]] = 0
 
-        if skip_same_module:
-            path_ids = np.array(path_indices) + 1
-            mask = mask_same_module(mask, path_ids, p, thr, module_id)
+    if skip_same_module:
+        path_ids = np.array(path_indices) + 1
+        mask = mask_same_module(mask, path_ids, p, thr, module_id)
 
-        # `a` is the culuminative probability between each hit in the path
-        # At each step we look at the best candidate for the whole (previously geberate) track
-        a = (p + a) * mask
-        # a += p
-        # a *= mask
+    # `a` is the culuminative probability between each hit in the path
+    # At each step we look at the best candidate for the whole (previously geberate) track
+    a = (p + a) * mask
 
-        # a[0] at step 3 = p01 + p02
-        # a[1] at step 3 = p01 + p12
+    # When two points are added, we can build a helix and use it to validate the next point
+    if fit and validator is None and len(path_indices) >= 2:
+        validator = validator_from_path_idx(**locals())  # type: ignore
 
-        # a[0] at step 4 = p01 + p02 + p03
-        # a[1] at step 4 = p01 + p12 + p13
-        # a[2] at step 4 = p02 + p12 + p23
+    # TODO
+    # p_ = p + diffs(p) * weight
 
-        # a[0] at step 5 = p01 + p02 + p03 + p04
-        # a[1] at step 5 = p01 + p12 + p13 + p14
-        # a[2] at step 5 = p02 + p12 + p23 + p24
-        # a[3] at step 5 = p03 + p13 + p23 + p34
+    # TODO
+    # if validator(x,y)
+    if validator:
+        for i in range(len(a)):
+            cand_idx = a.argmax()
+            x_t, y_t, z_t = hits.iloc[cand_idx][["x", "y", "z"]].values  # type: ignore
+            validation = validator(x_t, y_t, z_t)
+            validated = validation["validated"]
+            if not validated and a.max() > thr * len(path_indices):
+                a[cand_idx] = 0
+                continue
+            else:
+                break
 
-        # a[0] at step 6 = p01 + p02 + p03 + p04 + p05
-        # a[1] at step 6 = p01 + p12 + p13 + p14 + p15
-        # a[2] at step 6 = p02 + p12 + p23 + p24 + p25
-
-        # a[n] = sum(p(n belonging to path))
-
-        # Breaking condition: if best average probability is below threshold, end path
-        if a.max() < thr * len(path_indices):
-            break
-        # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
+    # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
+    if a.max() > thr * len(path_indices) and not last:
         path_indices.append(a.argmax())  # type: ignore
+        do_break = False
+    # Breaking condition: if best average probability is below threshold, end path
+    else:
+        do_break = True
 
-    # Convert indices back to hit_ids by adding 1
-    return np.array(path_indices) + 1
+    return path_indices, mask, a, validator, do_break
 
 
-def get_path_smart(
+def get_path(
     hit_id: int,
     thr: float,
     mask: npt.NDArray,
@@ -116,7 +150,7 @@ def get_path_smart(
     Returns list[hit_id].
     """
     # Verify correct input
-    if preds is None and features is not None and hits is not None:
+    if preds is None and (features is None or hits is None or model is None):
         raise ValueError("Either preds or features and truth must be provided")
     if fit and hits is None:
         raise ValueError("hits must be provided if fit=True")
@@ -128,79 +162,23 @@ def get_path_smart(
 
     validator = None
     while True:
-        # Predict probability of each pair of hits with the last hit in the path
-        hit_id_last = path_indices[-1] + 1
-        if preds is not None:
-            p = retrieve_predict(hit_id_last, preds)
-        else:
-            if features is None or hits is None or model is None:
-                raise ValueError("Either preds or (features & hits & model) must be provided")
-
-            p = make_predict(model=model, features=features, hits=hits, hit_id=hit_id_last, thr=thr)
-
-        # When two points are added, we can build a helix and use it to validate the next point
-        if fit and len(path_indices) == 2:
-            x_2, y_2, z_2 = hits.iloc[path_indices][["x", "y", "z"]].values.T  # type: ignore
-            # Add origin
-            x_0, y_0, z_0 = 0, 0, 0
-            x_3 = np.append(x_2, x_0)
-            y_3 = np.append(y_2, y_0)
-            z_3 = np.append(z_2, z_0)
-
-            # Get validator
-            validator = get_validator(
-                x_3,  # type: ignore
-                y_3,  # type: ignore
-                z_3,  # type: ignore
-                abs_tolerance_line=abs_tolerance_line,
-                abs_tolerance_r=abs_tolerance_r,
-                abs_tolerance_trig=abs_tolerance_trig,
-                verbose=False,
-            )
-
-        # TODO
-        # p_ = p + diffs(p) * weight
-
-        # Generate mask of hits that have a probability above the threshold
-        mask = (p > thr) * mask
-        # Mask last added hit
-        mask[path_indices[-1]] = 0
-
-        if skip_same_module:
-            path_ids = np.array(path_indices) + 1
-            mask = mask_same_module(mask, path_ids, p, thr, module_id)
-
-        # `a` is the culuminative probability between each hit in the path
-        # At each step we look at the best candidate for the whole (previously geberate) track
-        a = (p + a) * mask
-
-        # TODO
-        # if validator(x,y)
-        if validator:
-            for i in range(100):
-                cand_idx = a.argmax()
-                x_t, y_t, z_t = hits.iloc[cand_idx][["x", "y", "z"]].values  # type: ignore
-                validation = validator(x_t, y_t, z_t)
-                validated = validation["validated"]
-                if not validated:
-                    a[cand_idx] = 0
-                    continue
-                else:
-                    break
-
-        # Breaking condition: if best average probability is below threshold, end path
-        if a.max() < thr * len(path_indices):
+        # Keep adding hits until breaking condition is met
+        path_indices, mask, a, validator, do_break = path_add_one(**locals())
+        if do_break:
             break
-
-        # Add index of hit with highest probability to path, proceed with this hit as the seed for the next iteration
-        path_indices.append(a.argmax())  # type: ignore
-
     # Convert indices back to hit_ids by adding 1
     return np.array(path_indices) + 1
 
 
 def redraw(
-    path_ids: npt.NDArray, hit_id: int, thr: float, mask: npt.NDArray, module_id: npt.NDArray, preds: list[npt.NDArray]
+    path_ids: npt.NDArray,
+    hit_id: int,
+    thr: float,
+    mask: npt.NDArray,
+    module_id: npt.NDArray,
+    preds: list[npt.NDArray],
+    fit: bool,
+    hits: pd.DataFrame | None = None,
 ):
     """Try redrawing path with one hit removed for improved confidence."""
     # Try redrawing path with one hit removed
@@ -210,7 +188,7 @@ def redraw(
         second_hit_index = path_ids[1] - 1
         mask[second_hit_index] = 0
         # Redraw; try second best hit as second hit
-        path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+        path2 = get_path(hit_id, thr, mask, module_id, preds=preds, fit=fit, hits=hits)
 
         # Check for improvement
         if len(path2) > len(path_ids):
@@ -221,7 +199,7 @@ def redraw(
             mask[second_hit_index] = 0
 
             # Redraw again; try third best hit as second hit
-            path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+            path2 = get_path(hit_id, thr, mask, module_id, preds=preds, fit=fit, hits=hits)
 
             # Check for improvement
             if len(path2) > len(path_ids):
@@ -236,7 +214,7 @@ def redraw(
             mask[path2[1] - 1] = 0
 
             # Redraw
-            path2 = get_path(hit_id, thr, mask, module_id, preds=preds)
+            path2 = get_path(hit_id, thr, mask, module_id, preds=preds, fit=fit, hits=hits)
 
             # Check for improvement
             if len(path2) > len(path_ids):
@@ -254,6 +232,10 @@ def get_all_paths(
     do_redraw: bool = True,
     debug_limit: int | None = None,
     subject_idx: npt.NDArray | None = None,
+    fit: bool = False,
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
 ) -> list[npt.NDArray]:
     """Generate all paths for all hits in the event as seeds. Returns list of hit_ids per seed."""
 
@@ -282,10 +264,21 @@ def get_all_paths(
         mask = np.zeros(len(hits))
         mask[subject_idx] = 1  # subject_idx == None -> skip_mask = np.ones(N)
 
-        path = get_path(hit_id, thr, mask, module_id, preds=preds)
+        path = get_path(
+            hit_id,
+            thr,
+            mask,
+            module_id,
+            preds=preds,
+            fit=fit,
+            hits=hits,
+            abs_tolerance_line=abs_tolerance_line,
+            abs_tolerance_r=abs_tolerance_r,
+            abs_tolerance_trig=abs_tolerance_trig,
+        )
 
         if do_redraw:
-            path = redraw(path, hit_id, thr, mask, module_id, preds)
+            path = redraw(path, hit_id, thr, mask, module_id, preds, fit=fit, hits=hits)
         tracks_all.append(path)
     return tracks_all
 
@@ -298,6 +291,8 @@ def extend_path(
     preds: list[npt.NDArray],
     skip_same_module=True,
     last=False,
+    fit=False,
+    hits=None,
 ):
     """Extend path by adding hits with a probability above the threshold."""
     a = 0  # Cumulative probability
@@ -317,32 +312,16 @@ def extend_path(
 
         a = (p + a) * mask
 
+    path_indices = (path_ids - 1).tolist()
+
     # Add hits until no hits with a probability above the threshold are found
+    validator = None
     while True:
-        p = retrieve_predict(path_ids[-1], preds)
-
-        if last == False:
-            mask = (p > thr) * mask
-
-        # Shift hit_id -> hit_id - 1 because hit_id starts at 1 and index starts at 0
-        # Occlude last added hit
-        mask[path_ids[-1] - 1] = 0
-
-        if skip_same_module:
-            mask = mask_same_module(mask, path_ids, p, thr, module_id)
-
-        a = (p + a) * mask
-
-        if a.max() < thr * len(path_ids):
+        path_indices, mask, a, validator, do_break = path_add_one(**locals())
+        if do_break:
             break
 
-        # Add hit with highest probability to path
-        best_hit_id = a.argmax() + 1
-        path_ids = np.append(path_ids, best_hit_id)
-        if last:
-            break
-
-    return path_ids
+    return np.array(path_indices) + 1
 
 
 def get_leftovers(hit_index: int, tracks_all: list[npt.NDArray], merged_tracks: npt.NDArray) -> npt.NDArray:
@@ -369,6 +348,8 @@ def merge_tracks(
     module_id=None,
     preds=None,
     subject_idx: npt.NDArray | None = None,
+    fit: bool = False,
+    hits: pd.DataFrame | None = None,
     verbose: bool = True,
     debug=False,
 ):
@@ -401,7 +382,7 @@ def merge_tracks(
 
         if do_extend and len(leftovers_ids) > thr_extend_0:  # type: ignore
             mask = 1 * (merged_tracks == 0) * subject_mask
-            leftovers_ids = extend_path(leftovers_ids, thr=thr_extend_1, mask=mask, module_id=module_id, preds=preds)  # type: ignore
+            leftovers_ids = extend_path(leftovers_ids, thr=thr_extend_1, mask=mask, module_id=module_id, preds=preds, fit=fit, hits=hits)  # type: ignore
 
         if subject_idx is not None:
             # Filter on subject hits
@@ -425,7 +406,15 @@ def merge_tracks(
 # TODO: add comments
 # Should be ready for tracklets
 def extend_tracks(
-    merged_tracks, thr, module_id, preds, check_modulus=False, last=False, subject_idx: npt.NDArray | None = None
+    merged_tracks,
+    thr,
+    module_id,
+    preds,
+    check_modulus=False,
+    last=False,
+    subject_idx: npt.NDArray | None = None,
+    fit: bool = False,
+    hits: pd.DataFrame | None = None,
 ):
     subject_mask = np.zeros(len(merged_tracks))
     subject_mask[subject_idx] = 1
@@ -443,7 +432,9 @@ def extend_tracks(
             continue
 
         mask = 1 * (merged_tracks == 0) * subject_mask
-        path_ids = extend_path(path_ids=path_ids, thr=thr, mask=mask, module_id=module_id, preds=preds, last=last)
+        path_ids = extend_path(
+            path_ids=path_ids, thr=thr, mask=mask, module_id=module_id, preds=preds, last=last, fit=fit, hits=hits
+        )
         path_indices = path_ids - 1
         merged_tracks[path_indices] = track_id
     return merged_tracks
@@ -459,6 +450,8 @@ def run_merging(
     log_evaluations=True,
     truth: pd.DataFrame | None = None,
     subject_idx: npt.NDArray | None = None,
+    fit=False,
+    hits: pd.DataFrame | None = None,
     stages=[
         {"thr": 6},  # 0: merge
         {"thr": 0.6},  # 1: extend
@@ -477,10 +470,7 @@ def run_merging(
 
     if not multi_stage:
         merged_tracks, _ = merge_tracks(
-            thr=3,
-            tracks_all=tracks_all,
-            ordered_by_score=ordered_by_score,
-            subject_idx=subject_idx,
+            thr=3, tracks_all=tracks_all, ordered_by_score=ordered_by_score, subject_idx=subject_idx, fit=fit, hits=hits
         )
         evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
         return merged_tracks
@@ -494,6 +484,8 @@ def run_merging(
         ordered_by_score=ordered_by_score,
         max_track_id=max_track_id,
         subject_idx=subject_idx,
+        fit=fit,
+        hits=hits,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -504,6 +496,8 @@ def run_merging(
         module_id=module_id,
         preds=preds,
         subject_idx=subject_idx,
+        fit=fit,
+        hits=hits,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -518,12 +512,20 @@ def run_merging(
         module_id=module_id,
         preds=preds,
         subject_idx=subject_idx,
+        fit=fit,
+        hits=hits,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
     # Stage 3: extend
     merged_tracks = extend_tracks(
-        **stages[3], merged_tracks=merged_tracks, module_id=module_id, preds=preds, subject_idx=subject_idx
+        **stages[3],
+        merged_tracks=merged_tracks,
+        module_id=module_id,
+        preds=preds,
+        subject_idx=subject_idx,
+        fit=fit,
+        hits=hits,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -538,6 +540,8 @@ def run_merging(
         module_id=module_id,
         preds=preds,
         subject_idx=subject_idx,
+        fit=fit,
+        hits=hits,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -550,6 +554,8 @@ def run_merging(
         check_modulus=True,
         last=True,
         subject_idx=subject_idx,
+        fit=fit,
+        hits=hits,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
