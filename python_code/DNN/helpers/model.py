@@ -17,13 +17,15 @@ from tqdm import tqdm
 
 import numpy.typing as npt
 import pandas as pd
-from dirs import MODELS_ROOT, LOG_DIR, OUTPUT_DIR
+from .dirs import MODELS_ROOT, LOG_DIR, OUTPUT_DIR
 from data_exploration.helpers import datetime_str, get_logger, pickle_cache, find_filenames, retry
 
-if __name__ == "__main__":
-    from features import get_particle_ids, get_featured_event  # type: ignore
-else:
-    from .features import get_particle_ids, get_featured_event
+from .features import get_particle_ids, get_featured_event  # type: ignore
+
+# if __name__ == "__main__":
+#     from features import get_particle_ids, get_featured_event  # type: ignore
+# else:
+#     from .features import get_particle_ids, get_featured_event
 
 # Hyperparameters
 N_EVENTS = 100

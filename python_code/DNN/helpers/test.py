@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 
 from data_exploration.visualize import plot_prediction
 from data_exploration.event import Event
-from features import get_module_id
-from produce import get_path
+from .features import get_module_id
+from .produce import get_path
 
 
 TEST_THRESHOLD = 0.95

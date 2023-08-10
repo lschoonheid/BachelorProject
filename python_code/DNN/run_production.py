@@ -9,18 +9,19 @@ os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-from model import get_model
-from test import show_test  # type: ignore
+from trackml.score import score_event
+
 from data_exploration.helpers import get_logger, datetime_str, find_file, save, cached, select_r_less  # type: ignore
 from data_exploration.visualize import plot_prediction
 from data_exploration.event import Event
-from trackml.score import score_event
-from features import get_featured_event, get_module_id
-from predict import make_predict_matrix
-from produce import get_all_paths, run_merging
-from score import get_track_scores, score_event_fast
+from helpers.model import get_model
+from helpers.test import show_test  # type: ignore
+from helpers.features import get_featured_event, get_module_id
+from helpers.predict import make_predict_matrix
+from helpers.produce import get_all_paths, run_merging
+from helpers.score import get_track_scores, score_event_fast
 
-from dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR, DATA_SAMPLE, DATA_1
+from helpers.dirs import LOG_DIR, MODELS_ROOT, OUTPUT_DIR, DATA_SAMPLE, DATA_1
 
 
 def run(

@@ -4,7 +4,7 @@ import pandas as pd
 
 from data_exploration.helpers import pickle_cache
 from data_exploration.event import Event
-from dirs import DATA_SAMPLE
+from .dirs import DATA_SAMPLE
 
 
 def get_event(event_name: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:

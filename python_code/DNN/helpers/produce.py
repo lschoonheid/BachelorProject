@@ -12,11 +12,11 @@ os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from keras.models import Model
 from tqdm import tqdm
 
-from features import mask_same_module
-from predict import retrieve_predict, make_predict
-from score import evaluate_tracks
+from .features import mask_same_module
+from .predict import retrieve_predict, make_predict
+from .score import evaluate_tracks
 
-from dirs import *
+from .dirs import *
 
 
 # Checked
