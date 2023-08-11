@@ -1,3 +1,4 @@
+import argparse
 from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
@@ -5,7 +6,7 @@ from pandas import DataFrame
 from trackml.dataset import load_event_truth
 
 from data_exploration.constants import DIRECTORY, DATA_SAMPLE
-from data_exploration.helpers import find_file, find_files, prepare_path, add_r, select_r_0, extend_features
+from data_exploration.helpers import find_file, find_files, prepare_path, add_r, select_r_0, extend_features, get_logger
 from data_exploration.visualize import compare_histograms, evaluate_submission
 from dirs import OUTPUT_DIR, PLOT_PATH
 
@@ -141,21 +142,26 @@ def add_purities(
     return good_pairs
 
 
-if __name__ == "__main__":
+def extract(dir=OUTPUT_DIR, event_name=None, min_hits=4, verbose=False):
     min_hits = 4
 
-    submissions = find_files("submission_", dir=OUTPUT_DIR, extension="pkl")
+    if event_name is None:
+        submissions: list[pd.DataFrame] = find_files("submission_tracks", dir=dir, extension="pkl")
+    else:
+        # Inspect specific event
+        submission = find_file(f"submission_tracks_{event_name}", dir=dir, extension="pkl")
+        if submission is None:
+            raise FileNotFoundError(f"Event {event_name} not found")
+        submissions: list[pd.DataFrame] = [submission]
 
-    if len(submissions) == 0:
-        print("No submissions found")
-        exit(1)
+    assert len(submissions) != 0, "No submissions found"
 
     particles_list = []
     considered_pairs_list = []
     for submission in submissions:
         assert "event_id" in submission, "Submission does not contain event_id"
 
-        truth = get_truth(submission, output_dir=OUTPUT_DIR)
+        truth = get_truth(submission, output_dir=dir)
         pairs = get_pairs(submission, truth)
 
         considered_particles = select_particles(pairs, min_hits=min_hits)
@@ -170,21 +176,38 @@ if __name__ == "__main__":
         particles_list.append(considered_particles_extended)
         considered_pairs_list.append(considered_pairs_extended)
 
-        if False:
-            print(considered_pairs)
-            print(considered_particles_extended)
-            print(considered_pairs_extended)
+        if verbose:
+            get_logger().debug(considered_pairs)
+            get_logger().debug(considered_particles_extended)
+            get_logger().debug(considered_pairs_extended)
 
     # Combine all events
     all_considered_particles_extended = pd.concat(particles_list)
     all_considered_pairs_extended = pd.concat(considered_pairs_list)
     n_events = len(submissions)
 
+    return all_considered_particles_extended, all_considered_pairs_extended, n_events
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog="data_exploration", description="Explore the data")
+
+    parser.add_argument("-d", dest="dir", type=str, default=OUTPUT_DIR, help="Choose directory")
+    parser.add_argument("-e", dest="event_name", type=str, default=None, help="Choose event name")
+    parser.add_argument("-o", dest="output_dir", type=str, default=PLOT_PATH, help="Choose event name")
+
+    args = parser.parse_args()
+    kwargs = vars(args)
+
+    all_considered_particles_extended, all_considered_pairs_extended, n_events = extract(
+        dir=kwargs.pop("dir"), event_name=kwargs.pop("event_name")
+    )
+
     # Plot evaluations
     evaluate_submission(
         all_considered_particles_extended,
         all_considered_pairs_extended,
         tag=f"{n_events}_events",
-        dir=PLOT_PATH,
+        dir=kwargs.pop("output_dir"),
         bins=100,
     )
