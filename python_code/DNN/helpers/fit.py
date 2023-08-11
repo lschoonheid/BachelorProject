@@ -4,6 +4,8 @@ from typing import Any, Callable, Iterable
 from scipy.optimize import curve_fit, minimize
 from numpy.typing import NDArray
 
+from data_exploration.helpers import get_logger
+
 
 def poly_fit(X, Y, Z, deg=3, n=50, crop: float = 2):
     """Axis always `z`."""
@@ -51,7 +53,7 @@ def validator_circle(
     validated = diff <= abs_tolerance or diff <= rel_tolerance * r**2
 
     if kwargs.get("verbose") == True:
-        print("on circle:", validated, "diff", diff, r, dist)
+        get_logger().debug("on circle:", validated, "diff", diff, r, dist)
 
     return {
         "validated": validated,
@@ -117,14 +119,14 @@ def get_validator_xy(
         slope, intercept = np.polyfit([p1[0], p2[0]], [p1[1], p2[1]], 1)
 
         if kwargs.get("verbose") == True:
-            print("Validator is line")
+            get_logger().debug("Validator is line")
         return lambda x, y: validator_line_xy(x, y, slope, intercept, **kwargs)
     # Circle
     else:
         center, r = define_circle(p1, p2, p3)
 
         if kwargs.get("verbose") == True:
-            print("Validator is circle")
+            get_logger().debug("Validator is circle")
         return lambda x, y: validator_circle(x, y, center, r, **kwargs)
 
 
@@ -313,7 +315,7 @@ def validator_helix(
     validation_circle: dict = validator_circle(x, y, center, r, abs_tolerance_r, rel_tolerance)  # type: ignore
 
     if kwargs.get("verbose") == True:
-        print("Circle validation:", validation_circle)
+        get_logger().debug("Circle validation:", validation_circle)
 
     # Fast return, skip further checking if circle is not validated already
     if not validation_circle["validated"]:
@@ -323,7 +325,7 @@ def validator_helix(
     validation_trig: dict = validator_trig(x, y, z, center, r, f, phi_0, z_0, abs_tolerance_trig, rel_tolerance)  # type: ignore
 
     if kwargs.get("verbose") == True:
-        print("Trig validation:", validation_trig)
+        get_logger().debug("Trig validation:", validation_trig)
 
     validated = validation_circle["validated"] and validation_trig["validated"]
 
@@ -351,7 +353,7 @@ def closer_to_sine_or_cosine_symmetry(phi):
         return "equal"
 
 
-def get_f_fit(X_arr, Y_arr, Z_arr, r, phi_0, z_0, center) -> float:
+def get_f_fit(X_arr, Y_arr, Z_arr, r, phi_0, z_0, center) -> float | None:
     """Get frequency `f` by fitting a sine and cosine function to the data."""
     center_x, center_y = center
 
@@ -360,8 +362,27 @@ def get_f_fit(X_arr, Y_arr, Z_arr, r, phi_0, z_0, center) -> float:
     sin_test = lambda x, f: trig(x, r, 0, f, phi_0, z_0, center_y)
 
     # Fit functions to data
-    popt_zx, pcov = curve_fit(cos_test, Z_arr, X_arr, p0=0)
-    popt_zy, pcov = curve_fit(sin_test, Z_arr, Y_arr, p0=0)
+    try:
+        popt_zx, pcov = curve_fit(cos_test, Z_arr, X_arr, p0=0)
+    except:
+        get_logger().warning("Could not fit cosine to data")
+        popt_zx = None
+
+    try:
+        popt_zy, pcov = curve_fit(sin_test, Z_arr, Y_arr, p0=0)
+    except:
+        get_logger().warning("Could not fit sine to data")
+        popt_zy = None
+
+    if popt_zx is None and popt_zy is None:
+        get_logger().warning("Could not fit sine or cosine to data")
+        return None
+
+    # If either fit failed, work with what we got
+    if popt_zx is None:
+        popt_zx: Any = popt_zy
+    if popt_zy is None:
+        popt_zy: Any = popt_zx
 
     # Get f
     f_zx = popt_zx[0]
@@ -414,12 +435,12 @@ def get_validator(
         # Since collinear, only need to check two points
 
         if kwargs.get("verbose") == True:
-            print("Validator is 3D line")
+            get_logger().debug("Validator is 3D line")
         return lambda x, y, z: validator_line(x, y, z, p1, p2, **kwargs)  # type: ignore
     # Circle
     else:
         if kwargs.get("verbose") == True:
-            print("Validator is helix")
+            get_logger().debug("Validator is helix")
 
         # Get circle
         center, r = define_circle(p1, p2, p3)
@@ -430,8 +451,13 @@ def get_validator(
 
         # Get f
         f = get_f_fit(X_arr, Y_arr, Z_arr, r, phi_0, z_0, center)
-
-        validator = lambda x, y, z: validator_helix(x, y, z, center, r, f, phi_0, z_0, **kwargs)
+        if f is None:
+            get_logger().warning("Could not determine frequency, returning circle validator")
+            validator = lambda x, y, z: validator_circle(
+                x, y, center, r, abs_tolerance=kwargs.get("abs_tolerance", 1.0e-6), verbose=kwargs.get("verbose", False)
+            )
+        else:
+            validator = lambda x, y, z: validator_helix(x, y, z, center, r, f, phi_0, z_0, **kwargs)
 
         infodict = {
             "center": center,
