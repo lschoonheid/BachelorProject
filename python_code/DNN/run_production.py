@@ -223,7 +223,7 @@ def run(
                     ",
                     fontsize=20,
                 )
-                fig.savefig(f"reconstructed_track_{track_id}_{event_name}.png", dpi=300)
+                fig.savefig(f"reconstructed_track_{track_id}_{event_name}_{most_likely_particle_id}.png", dpi=300)
                 plt.close()
     logger.info(f"End: { datetime_str()}")
 
@@ -233,6 +233,8 @@ if __name__ == "__main__":
 
     parser.add_argument("-e", dest="event_name", type=str, default="event000001001", help="Choose event name")
     parser.add_argument("-bs", dest="batch_size", type=int, default=20000, help="Choose batch_size")
+    parser.add_argument("-r", dest="reduce", type=float, default=0.05, help="Choose batch_size")
+    parser.add_argument("-d", dest="dir", type=str, default=OUTPUT_DIR, help="Choose batch_size")
     parser.add_argument("-f", dest="do_fit", action="store_true", help="Run with fitting during track construction")
 
     args = parser.parse_args()
