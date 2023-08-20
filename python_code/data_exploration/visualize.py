@@ -79,6 +79,14 @@ def get_crop(x, y, crop: float, square=False) -> tuple[tuple[float, float], tupl
     return xlim, ylim
 
 
+def make_compact(fig: Figure, new_size: tuple[float, float] = (5, 3)):
+    """Make a figure compact"""
+    fig.set_size_inches(*new_size)
+    fig.gca().set_title("")
+    fig.tight_layout()
+    return fig
+
+
 def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
     """Plot a scatter plot of the hits in either 2D or 3D"""
     # Create figure
@@ -104,6 +112,7 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
     ax.set_title(f"Scatter plot of { ax_title_str } coordinates")
     ax.legend(*scatter.legend_elements(), title=color_mode)
 
+    fig.tight_layout()
     return fig
 
 
@@ -146,6 +155,7 @@ def versus_scatter(
     if ylim:
         ax.set_ylim(ylim)
 
+    fig.tight_layout()
     return fig
 
 
@@ -256,6 +266,7 @@ def generate_track_fig(fig_x=FIG_X, fig_y=FIG_Y) -> tuple[Figure, Axes, Axes, Ax
     # Y,Z
     axyz.set_xlabel("y")
     axyz.set_ylabel("z")
+    fig.tight_layout()
     return fig, ax3d, axxy, axxz, axyz
 
 
@@ -357,6 +368,7 @@ def histogram(
     fig = plt.figure(figsize=(FIG_X, FIG_Y))
     ax = fig.add_subplot()
     ax.hist(x, bins=bins)
+    fig.tight_layout()
     return fig
 
 
@@ -450,6 +462,7 @@ def parameter_distribution(
     width = 0.4 * (hist_x[1] - hist_x[0])
     ax.bar(hist_x, hist_y, width=width)
     ax.errorbar(hist_x, hist_y, yerr=hist_y_err, fmt="o", markersize=1, ecolor="black", capsize=2)
+    fig.tight_layout()
     return fig
 
 
@@ -542,6 +555,7 @@ def plot_prediction(
     for ax in axes:
         ax.legend()
 
+    fig.tight_layout()
     return fig
 
 
@@ -583,6 +597,7 @@ def compare_histograms(
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     plt.legend()
+    fig.tight_layout()
     return fig
 
 
@@ -636,6 +651,7 @@ def fraction_histogram(
 
     ax.legend()
 
+    fig.tight_layout()
     return fig
 
 
@@ -683,6 +699,7 @@ def plot_efficiency(
     ax.set_xlabel(xlabel)
     ax.set_title(f"Efficiency by {xlabel}" if title is None else title)
     ax.legend()
+    fig.tight_layout()
 
     return fig
 
@@ -706,7 +723,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
     variables_str = ["r_0", "z_0", "p_0", "p_t_0", "log_10_p_t_0", "phi_0", "theta_0", "pseudo_rapidity_0"]
     var_labels = [
         "vertex $r_0$ [mm]",
-        "$z_0$ [mm]",
+        "vertex $z_0$ [mm]",
         "$p$",
         "$P_{T}$",
         "$log_{10}$ $p_{T}$",
@@ -737,6 +754,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
                 color=["blue", "orange"],
             )
             fig.savefig(dir + f"{match_type_str}_{variable}_histogram{tag_str}.jpg", dpi=600)
+            make_compact(fig).savefig(dir + f"{match_type_str}_{variable}_histogram{tag_str}_big.jpg", dpi=600)
             plt.close()
 
         # Plot efficiency over variables
@@ -751,6 +769,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
                 xlabel=label,
             )
             fig.savefig(dir + f"{match_type_str}_{variable}_efficiency{tag_str}.jpg", dpi=600)
+            make_compact(fig).savefig(dir + f"{match_type_str}_{variable}_efficiency{tag_str}_big.jpg", dpi=600)
             plt.close()
 
         # Plot zoom of r_0
@@ -759,11 +778,12 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
             matches,
             variable="r_0",
             bins=bins,
-            min=0,
+            min=30,
             max=100,
             xlabel="zoom vertex $r_0$ [mm]",
         )
         fig.savefig(dir + f"{match_type_str}_{'r_0'}_zoom_efficiency{tag_str}.jpg", dpi=600)
+        make_compact(fig).savefig(dir + f"{match_type_str}_{'r_0'}_zoom_efficiency{tag_str}_big.jpg", dpi=600)
         plt.close()
 
     # Plot stacked
@@ -780,6 +800,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
             ylabel="Fraction",
         )
         fig.savefig(dir + f"fractions_{variable}_histogram{tag_str}.jpg", dpi=600)
+        make_compact(fig).savefig(dir + f"fractions_{variable}_histogram{tag_str}_big.jpg", dpi=600)
         plt.close()
 
     # Plot zoom of r_0
@@ -788,13 +809,14 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
         variable="r_0",
         labels=match_types_str,
         bins=bins,
-        min=0,
+        min=30,
         max=100,
         title=f"Track $r_0$",
-        xlabel="$r_0$",
+        xlabel="zoom vertex $r_0$ [mm]",
         ylabel="Fraction",
     )
     fig.savefig(dir + f"fractions_{'r_0'}_zoom_histogram{tag_str}.jpg", dpi=600)
+    make_compact(fig).savefig(dir + f"fractions_{'r_0'}_zoom_histogram{tag_str}_big.jpg", dpi=600)
     plt.close()
 
     # Plot general purity distribution
@@ -814,6 +836,7 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
     # remove irrelevant xticks
     [ax.set_xticks([]) for ax in fig.axes]
     fig.savefig(dir + f"fractions_track_purity_histogram{tag_str}.jpg", dpi=600)
+    make_compact(fig).savefig(dir + f"fractions_track_purity_histogram{tag_str}_big.jpg", dpi=600)
     plt.close()
 
 
@@ -832,4 +855,5 @@ def plot_fit(X, Y, Z, x_new, y_new, z_new, vaxis: str, crop=2, **kwargs):
     ax.set_xlabel("z")
     ax.set_ylabel(vaxis)
     ax.legend()
+    fig.tight_layout()
     return fig, ax
