@@ -23,8 +23,9 @@ def get_truth(submission: DataFrame, truth_dir: str = DATA_SAMPLE, output_dir: s
     # Load truth data
     # First try to load from output_dir, where reduced truth data is stored
     truth = find_file(f"truth_{event_name}", dir=output_dir, extension="csv")
-    if truth is None:
-        truth = load_event_truth(DATA_SAMPLE + event_name)
+    # if truth is None:
+    #     truth = load_event_truth(DATA_SAMPLE + event_name)
+    assert truth is not None, "Truth data not found for event " + event_name
 
     # # Link together
     # combined: DataFrame = submission.merge(truth, how="right", on="hit_id")
@@ -76,6 +77,7 @@ def count_truth(combined: DataFrame):
 
 
 def select_particles(truth: DataFrame, min_hits: int = 4):
+    """Select particles with at least `min_hits` hits."""
     p_count = (
         truth[truth["particle_id"] != 0]
         .value_counts("particle_id")
@@ -146,10 +148,10 @@ def extract(dir=OUTPUT_DIR, event_name=None, min_hits=4, verbose=False):
     min_hits = 4
 
     if event_name is None:
-        submissions: list[pd.DataFrame] = find_files("submission_tracks", dir=dir, extension="pkl")
+        submissions: list[pd.DataFrame] = find_files("submission_", dir=dir, extension="pkl")
     else:
         # Inspect specific event
-        submission = find_file(f"submission_tracks_{event_name}", dir=dir, extension="pkl")
+        submission = find_file(f"submission_{event_name}", dir=dir, extension="pkl")
         if submission is None:
             raise FileNotFoundError(f"Event {event_name} not found")
         submissions: list[pd.DataFrame] = [submission]
