@@ -156,7 +156,7 @@ def extract(dir=OUTPUT_DIR, event_name=None, min_hits=4, verbose=False):
             raise FileNotFoundError(f"Event {event_name} not found")
         submissions: list[pd.DataFrame] = [submission]
 
-    assert len(submissions) != 0, "No submissions found"
+    assert len(submissions) != 0, "No submissions found in " + dir
 
     particles_list = []
     considered_pairs_list = []
@@ -194,22 +194,32 @@ def extract(dir=OUTPUT_DIR, event_name=None, min_hits=4, verbose=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="data_exploration", description="Explore the data")
 
-    parser.add_argument("-d", dest="dir", type=str, default=OUTPUT_DIR, help="Choose directory")
+    parser.add_argument("-d", dest="dirs", type=str, nargs="+", default=[OUTPUT_DIR], help="Choose directories")
+    parser.add_argument("-l", dest="tags", type=str, nargs="+", default=[""], help="Choose datalabels")
     parser.add_argument("-e", dest="event_name", type=str, default=None, help="Choose event name")
     parser.add_argument("-o", dest="output_dir", type=str, default=PLOT_PATH, help="Choose event name")
 
     args = parser.parse_args()
     kwargs = vars(args)
 
-    all_considered_particles_extended, all_considered_pairs_extended, n_events = extract(
-        dir=kwargs.pop("dir"), event_name=kwargs.pop("event_name")
-    )
+    print(kwargs)
+
+    comparison_dirs = kwargs.pop("dirs")
+    comparison_datasets = [extract(dir=dir, event_name=None) for dir in comparison_dirs]
+
+    all_considered_particles_extended_arr, all_considered_pairs_extended_arr, n_events_arr = [], [], []
+    for data in comparison_datasets:
+        all_considered_particles_extended, all_considered_pairs_extended, n_events = data
+        all_considered_particles_extended_arr.append(all_considered_particles_extended)
+        all_considered_pairs_extended_arr.append(all_considered_pairs_extended)
+        n_events_arr.append(n_events)
 
     # Plot evaluations
     evaluate_submission(
-        all_considered_particles_extended,
-        all_considered_pairs_extended,
-        tag=f"{n_events}_events",
+        all_considered_particles_extended_arr,
+        all_considered_pairs_extended_arr,
+        n_events_arr,
+        tags_arr=kwargs.pop("tags"),
         dir=kwargs.pop("output_dir"),
         bins=100,
     )

@@ -581,21 +581,31 @@ def compare_histograms(
     test,
     variable: str,
     bins=100,
-    min: float | None = None,  # type: ignore
-    max: float | None = None,  # type: ignore
+    x_min: float | None = None,  # type: ignore
+    x_max: float | None = None,  # type: ignore
+    y_min: float | None = None,  # type: ignore
+    y_max: float | None = None,  # type: ignore
     density=False,
     title="",
     xlabel="x",
     ylabel="y",
     figsize=(10, 6),
+    base: Figure | None = None,
     **kwargs,
 ):
-    fig, ax = plt.subplots(figsize=figsize)
-    range = get_range([truth, test], variable, min, max)
+    fig, ax = plt.subplots(figsize=figsize) if base is None else (base, base.gca())
+
+    range = get_range([truth, test], variable, x_min, x_max)
     ax.hist(x=[truth[variable], test[variable]], bins=bins, range=range, density=density, alpha=0.75, **kwargs)
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+
+    if y_min is not None:
+        ax.set_ylim(bottom=y_min)
+    if y_max is not None:
+        ax.set_ylim(top=y_max)
+
     plt.legend()
     fig.tight_layout()
     return fig
@@ -660,16 +670,18 @@ def plot_efficiency(
     test: pd.DataFrame,
     variable: str,
     bins: int = 100,
-    min=None,
-    max=None,
+    x_min=None,
+    x_max=None,
     title=None,
     xlabel="x",
     ylabel="Efficiency",
+    datalabel: str | None = None,
     figsize=(10, 6),
+    base: Figure | None = None,
     **kwargs,
 ):
-    min_bin = truth[variable].min() if min is None else min
-    max_bin = truth[variable].max() if max is None else max
+    min_bin = truth[variable].min() if x_min is None else x_min
+    max_bin = truth[variable].max() if x_max is None else x_max
     bins_index = pd.cut(pd.Series([min_bin, max_bin]), bins=bins, retbins=True)[1]
 
     cut_truth = pd.cut(truth[variable], bins=bins_index)  # type: ignore
@@ -683,7 +695,8 @@ def plot_efficiency(
 
     efficiency = binned_test_count / binned_truth_count
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(figsize=figsize) if base is None else (base, base.gca())
+
     x = np.arange(min_bin, max_bin, (max_bin - min_bin) / bins)
     yvariance = ((binned_test_count + 1) * (binned_test_count + 2)) / (
         (binned_truth_count + 2) * (binned_truth_count + 3)
@@ -692,32 +705,80 @@ def plot_efficiency(
     # yerr = groups_test.std()[variable] / (np.sqrt(binned_test_count))
     # yerr = np.sqrt(binned_test_count) / binned_truth_count
 
-    ax.plot(x, efficiency.values, label=ylabel, **kwargs)
-    ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label="Error")
-    ax.set_ylim(0, 1)
+    datalabel_str = f"H ({datalabel})" if datalabel else "H"
+    ax.plot(x, efficiency.values, label=datalabel_str, **kwargs)
+    ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label=f"$\Delta${datalabel_str}")
     ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel)
-    ax.set_title(f"Efficiency by {xlabel}" if title is None else title)
+    ax.set_title(f"H by {xlabel}" if title is None else title)
+    ax.grid(True)
+    ax.autoscale(enable=True, axis="both", tight=True)
+    ax.set_ylim(0, 1)
     ax.legend()
     fig.tight_layout()
 
     return fig
 
 
-def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="", bins=100):
+def _save_extra_figs(
+    fig: Figure,
+    dir: str,
+    match_type_str: str,
+    plot_type: str,
+    variable: str,
+    tag_str: str,
+    y_min: float,
+    y_max: float,
+    extra_tag: str | None = None,
+):
+    extra_tag_str = "_" + extra_tag if extra_tag is not None else ""
+
+    fig.savefig(dir + f"{match_type_str}_{variable}{extra_tag_str}_{plot_type}{tag_str}.jpg", dpi=600)
+
+    fig.gca().set_ylim(y_min, y_max)
+    fig.savefig(dir + f"{match_type_str}_{variable}{extra_tag_str}_{plot_type}{tag_str}_y_{y_min}_{y_max}.jpg", dpi=600)
+
+    fig.gca().set_ylim(0, 1)
+    make_compact(fig).savefig(dir + f"{match_type_str}_{variable}{extra_tag_str}_{plot_type}{tag_str}_big.jpg", dpi=600)
+    fig.gca().set_ylim(y_min, y_max)
+    fig.savefig(
+        dir + f"{match_type_str}_{variable}{extra_tag_str}_{plot_type}{tag_str}_y_{y_min}_{y_max}_big.jpg", dpi=600
+    )
+    plt.close()
+
+
+def evaluate_submission(
+    particles_arr: list[DataFrame],
+    pairs_arr: list[DataFrame],
+    n_events_arr: list[int],
+    tags_arr: list[str] | None = None,
+    thr=0.5,
+    dir="",
+    bins=100,
+):
     """Evaluate the submission by plotting histograms and efficiencies."""
+    assert len(particles_arr) == len(pairs_arr), "Number of particles and pairs must match"
+    if tags_arr is None:
+        tags_arr = [""] * len(particles_arr)
+    else:
+        assert len(particles_arr) == len(tags_arr), "Number of particle lists and number of tags must match"
 
     prepare_path(dir)
 
-    tag_str = f"_{tag}" if tag else ""
+    tag_str = "_" + "_".join(f"{n}_events" for n in n_events_arr)
 
     # Define types of matches
-    good = pairs[(pairs["particle_purity"] >= thr) & (pairs["track_purity"] >= thr)]
-    split = pairs[(pairs["particle_purity"] < thr) & (pairs["track_purity"] >= thr)]
-    multiple = pairs[(pairs["particle_purity"] >= thr) & (pairs["track_purity"] < thr)]
-    bad = pairs[(pairs["particle_purity"] < thr) & (pairs["track_purity"] < thr)]
+    good_arr = []
+    split_arr = []
+    multiple_arr = []
+    bad_arr = []
+    for particles, pairs in zip(particles_arr, pairs_arr):
+        good_arr.append(pairs[(pairs["particle_purity"] >= thr) & (pairs["track_purity"] >= thr)])
+        split_arr.append(pairs[(pairs["particle_purity"] < thr) & (pairs["track_purity"] >= thr)])
+        multiple_arr.append(pairs[(pairs["particle_purity"] >= thr) & (pairs["track_purity"] < thr)])
+        bad_arr.append(pairs[(pairs["particle_purity"] < thr) & (pairs["track_purity"] < thr)])
 
-    match_types: list[pd.DataFrame] = [good, split, multiple, bad]
+    match_types_arrs: list[list[pd.DataFrame]] = [good_arr, split_arr, multiple_arr, bad_arr]
     match_types_str: list[str] = ["good", "split", "multiple", "bad"]
 
     variables_str = ["r_0", "z_0", "p_0", "p_t_0", "log_10_p_t_0", "phi_0", "theta_0", "pseudo_rapidity_0"]
@@ -732,112 +793,125 @@ def evaluate_submission(particles, pairs, thr=0.5, tag: str | None = None, dir="
         "$\\eta$",
     ]
 
-    mins = [0, -15, None, 0, None, -np.pi, 0, -np.pi]
-    maxs = [600, 15, 25, 5, 2, np.pi, np.pi, np.pi]
+    x_mins = [0, -15, 0, 0, None, -np.pi, 0, -np.pi]
+    x_maxs = [600, 15, 25, 5, 2, np.pi, np.pi, np.pi]
+
+    # For efficiencies only
+    y_mins = [0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
+    y_maxs = [1, 1, 1, 1, 1, 1, 1, 1]
 
     # Plot serperately
-    for match_type_str, matches in zip(match_types_str, match_types):
-        for variable, label, min, max in zip(variables_str, var_labels, mins, maxs):
-            fig = compare_histograms(
-                particles,
-                matches,
-                variable=variable,
-                bins=bins,
-                min=min,
-                max=max,
-                title=f"Track {label}",
-                xlabel=label,
-                ylabel="Frequence",
-                label=["Truth", "Reconstructed"],
-                histtype="step",
-                linewidth=1,
-                color=["blue", "orange"],
-            )
+    for match_type_str, matches_arr in zip(match_types_str, match_types_arrs):
+        for variable, label, x_min, x_max in zip(variables_str, var_labels, x_mins, x_maxs):
+            fig: Figure = None  # type: ignore
+            for particles, matches, tag in zip(particles_arr, matches_arr, tags_arr):
+                fig = compare_histograms(
+                    particles,
+                    matches,
+                    variable=variable,
+                    bins=bins,
+                    x_min=x_min,
+                    x_max=x_max,
+                    title=f"Track {label}",
+                    xlabel=label,
+                    ylabel="Frequence",
+                    label=[f"Truth {tag}", f"Reconstructed {tag}"],
+                    histtype="step",
+                    linewidth=1,
+                    color=["blue", "orange"],
+                    base=fig,
+                )
             fig.savefig(dir + f"{match_type_str}_{variable}_histogram{tag_str}.jpg", dpi=600)
             make_compact(fig).savefig(dir + f"{match_type_str}_{variable}_histogram{tag_str}_big.jpg", dpi=600)
             plt.close()
 
         # Plot efficiency over variables
-        for variable, label, min, max in zip(variables_str, var_labels, mins, maxs):
+        for variable, label, x_min, x_max, y_min, y_max in zip(
+            variables_str, var_labels, x_mins, x_maxs, y_mins, y_maxs
+        ):
+            fig: Figure = None  # type: ignore
+            for particles, matches, tag in zip(particles_arr, matches_arr, tags_arr):
+                fig = plot_efficiency(
+                    particles,
+                    matches,
+                    variable=variable,
+                    bins=bins,
+                    x_min=x_min,
+                    x_max=x_max,
+                    xlabel=label,
+                    datalabel=tag,
+                    base=fig,
+                )
+            _save_extra_figs(fig, dir, match_type_str, variable, "efficiency", tag_str, y_min, y_max)
+
+        # Plot zoom of r_0
+        fig: Figure = None  # type: ignore
+        for particles, matches, tag in zip(particles_arr, matches_arr, tags_arr):
             fig = plot_efficiency(
                 particles,
                 matches,
-                variable=variable,
+                variable="r_0",
                 bins=bins,
-                min=min,
-                max=max,
-                xlabel=label,
+                x_min=30,
+                x_max=100,
+                xlabel="zoom vertex $r_0$ [mm]",
+                datalabel=tag,
+                base=fig,
             )
-            fig.savefig(dir + f"{match_type_str}_{variable}_efficiency{tag_str}.jpg", dpi=600)
-            make_compact(fig).savefig(dir + f"{match_type_str}_{variable}_efficiency{tag_str}_big.jpg", dpi=600)
-            plt.close()
+        _save_extra_figs(fig, dir, match_type_str, "r_0", "efficiency", tag_str, 0.6, 1, "zoom")
 
-        # Plot zoom of r_0
-        fig = plot_efficiency(
-            particles,
-            matches,
+    # Plot stacked
+    for variable, label, x_min, x_max, y_min, y_max in zip(variables_str, var_labels, x_mins, x_maxs, y_mins, y_maxs):
+        for i, tag in enumerate(tags_arr):
+            match_types = [arr[i] for arr in match_types_arrs]
+            fig = fraction_histogram(
+                match_types,
+                variable=variable,
+                labels=match_types_str,
+                bins=bins,
+                min=x_min,
+                max=x_max,
+                title=f"Track {label}",
+                xlabel=label,
+                ylabel="Fraction",
+            )
+            _save_extra_figs(fig, dir, "fractions", variable, "histogram", f"{tag_str}_{tag}", y_min, y_max)
+
+    # Plot zoom of r_0
+    for i, tag in enumerate(tags_arr):
+        match_types = [arr[i] for arr in match_types_arrs]
+        fig = fig = fraction_histogram(
+            match_types,
             variable="r_0",
+            labels=match_types_str,
             bins=bins,
             min=30,
             max=100,
+            title=f"Track $r_0$",
             xlabel="zoom vertex $r_0$ [mm]",
-        )
-        fig.savefig(dir + f"{match_type_str}_{'r_0'}_zoom_efficiency{tag_str}.jpg", dpi=600)
-        make_compact(fig).savefig(dir + f"{match_type_str}_{'r_0'}_zoom_efficiency{tag_str}_big.jpg", dpi=600)
-        plt.close()
-
-    # Plot stacked
-    for variable, label, min, max in zip(variables_str, var_labels, mins, maxs):
-        fig = fraction_histogram(
-            match_types,
-            variable=variable,
-            labels=match_types_str,
-            bins=bins,
-            min=min,
-            max=max,
-            title=f"Track {label}",
-            xlabel=label,
             ylabel="Fraction",
         )
-        fig.savefig(dir + f"fractions_{variable}_histogram{tag_str}.jpg", dpi=600)
-        make_compact(fig).savefig(dir + f"fractions_{variable}_histogram{tag_str}_big.jpg", dpi=600)
-        plt.close()
-
-    # Plot zoom of r_0
-    fig = fig = fraction_histogram(
-        match_types,
-        variable="r_0",
-        labels=match_types_str,
-        bins=bins,
-        min=30,
-        max=100,
-        title=f"Track $r_0$",
-        xlabel="zoom vertex $r_0$ [mm]",
-        ylabel="Fraction",
-    )
-    fig.savefig(dir + f"fractions_{'r_0'}_zoom_histogram{tag_str}.jpg", dpi=600)
-    make_compact(fig).savefig(dir + f"fractions_{'r_0'}_zoom_histogram{tag_str}_big.jpg", dpi=600)
-    plt.close()
+        _save_extra_figs(fig, dir, "fractions", "r_0", "histogram", f"{tag_str}_{tag}", 0.6, 1, "zoom")
 
     # Plot general purity distribution
-    [df.insert(0, "track_count", 1) for df in match_types]
-    fig = fraction_histogram(
-        match_types,
-        variable="track_count",
-        labels=match_types_str,
-        bins=1,
-        min=0,
-        max=1,
-        title="Track purity distribution",
-        xlabel="",
-        ylabel="Fraction",
-        type="bar",
-    )
-    # remove irrelevant xticks
-    [ax.set_xticks([]) for ax in fig.axes]
-    fig.savefig(dir + f"fractions_track_purity_histogram{tag_str}.jpg", dpi=600)
-    make_compact(fig).savefig(dir + f"fractions_track_purity_histogram{tag_str}_big.jpg", dpi=600)
-    plt.close()
+    for i, tag in enumerate(tags_arr):
+        match_types = [arr[i] for arr in match_types_arrs]
+        [df.insert(0, "track_count", 1) for df in match_types]
+        fig = fraction_histogram(
+            match_types,
+            variable="track_count",
+            labels=match_types_str,
+            bins=1,
+            min=0,
+            max=1,
+            title="Track purity distribution",
+            xlabel="",
+            ylabel="Fraction",
+            type="bar",
+        )
+        # remove irrelevant xticks
+        [ax.set_xticks([]) for ax in fig.axes]
+        _save_extra_figs(fig, dir, "fractions", "track_count", "histogram", f"{tag_str}_{tag}", 0.6, 1, "zoom")
 
 
 def plot_fit(X, Y, Z, x_new, y_new, z_new, vaxis: str, crop=2, **kwargs):
