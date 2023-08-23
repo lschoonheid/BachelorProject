@@ -41,6 +41,9 @@ def run(
     animate=False,
     dir=OUTPUT_DIR,
     verbose=True,
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
     **kwargs,
 ):
     log_level = logging.DEBUG if verbose else logging.INFO
@@ -123,7 +126,24 @@ def run(
     # Generate tracks for each hit as seed
     thr: float = 0.85
 
-    tracks_all: list[npt.NDArray] = cached(f"{mode}_all_{event_name}", dir=dir, fallback_func=lambda: get_all_paths(hits, thr, module_id, preds, do_redraw=True, subject_idx=subject_idx, fit=do_fit), force_fallback=not preload, do_save=do_export)  # type: ignore
+    tracks_all: list[npt.NDArray] = cached(
+        f"{mode}_all_{event_name}",
+        dir=dir,
+        fallback_func=lambda: get_all_paths(
+            hits,
+            thr,
+            module_id,
+            preds,
+            do_redraw=True,
+            subject_idx=subject_idx,
+            fit=do_fit,
+            abs_tolerance_line=abs_tolerance_line,
+            abs_tolerance_r=abs_tolerance_r,
+            abs_tolerance_trig=abs_tolerance_trig,
+        ),
+        force_fallback=not preload,
+        do_save=do_export,
+    )  # type: ignore
     logger.info(f"{mode} loaded")
 
     # calculate track's confidence
@@ -146,6 +166,9 @@ def run(
             fit=do_fit,
             hits=hits,
             stages=stages,
+            abs_tolerance_line=abs_tolerance_line,
+            abs_tolerance_r=abs_tolerance_r,
+            abs_tolerance_trig=abs_tolerance_trig,
         ),
         force_fallback=not preload,
         do_save=do_export,
@@ -236,8 +259,14 @@ if __name__ == "__main__":
     parser.add_argument("-r", dest="reduce", type=float, default=0.05, help="Choose batch_size")
     parser.add_argument("-d", dest="dir", type=str, default=OUTPUT_DIR, help="Choose batch_size")
     parser.add_argument("-f", dest="do_fit", action="store_true", help="Run with fitting during track construction")
+    parser.add_argument("-t", dest="tol_h", type=float, default=10, help="Choose helix tolerance")
 
     args = parser.parse_args()
     kwargs = vars(args)
+
+    tol_h = kwargs.pop("tol_h")
+    kwargs["abs_tolerance_line"] = tol_h
+    kwargs["abs_tolerance_r"] = tol_h
+    kwargs["abs_tolerance_trig"] = tol_h
 
     run(**kwargs)

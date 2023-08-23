@@ -179,6 +179,9 @@ def redraw(
     preds: list[npt.NDArray],
     fit: bool,
     hits: pd.DataFrame | None = None,
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
 ):
     """Try redrawing path with one hit removed for improved confidence."""
     # Try redrawing path with one hit removed
@@ -188,7 +191,18 @@ def redraw(
         second_hit_index = path_ids[1] - 1
         mask[second_hit_index] = 0
         # Redraw; try second best hit as second hit
-        path2 = get_path(hit_id, thr, mask, module_id, preds=preds, fit=fit, hits=hits)
+        path2 = get_path(
+            hit_id,
+            thr,
+            mask,
+            module_id,
+            preds=preds,
+            fit=fit,
+            hits=hits,
+            abs_tolerance_line=abs_tolerance_line,
+            abs_tolerance_r=abs_tolerance_r,
+            abs_tolerance_trig=abs_tolerance_trig,
+        )
 
         # Check for improvement
         if len(path2) > len(path_ids):
@@ -199,7 +213,18 @@ def redraw(
             mask[second_hit_index] = 0
 
             # Redraw again; try third best hit as second hit
-            path2 = get_path(hit_id, thr, mask, module_id, preds=preds, fit=fit, hits=hits)
+            path2 = get_path(
+                hit_id,
+                thr,
+                mask,
+                module_id,
+                preds=preds,
+                fit=fit,
+                hits=hits,
+                abs_tolerance_line=abs_tolerance_line,
+                abs_tolerance_r=abs_tolerance_r,
+                abs_tolerance_trig=abs_tolerance_trig,
+            )
 
             # Check for improvement
             if len(path2) > len(path_ids):
@@ -214,7 +239,18 @@ def redraw(
             mask[path2[1] - 1] = 0
 
             # Redraw
-            path2 = get_path(hit_id, thr, mask, module_id, preds=preds, fit=fit, hits=hits)
+            path2 = get_path(
+                hit_id,
+                thr,
+                mask,
+                module_id,
+                preds=preds,
+                fit=fit,
+                hits=hits,
+                abs_tolerance_line=abs_tolerance_line,
+                abs_tolerance_r=abs_tolerance_r,
+                abs_tolerance_trig=abs_tolerance_trig,
+            )
 
             # Check for improvement
             if len(path2) > len(path_ids):
@@ -278,7 +314,19 @@ def get_all_paths(
         )
 
         if do_redraw:
-            path = redraw(path, hit_id, thr, mask, module_id, preds, fit=fit, hits=hits)
+            path = redraw(
+                path,
+                hit_id,
+                thr,
+                mask,
+                module_id,
+                preds,
+                fit=fit,
+                hits=hits,
+                abs_tolerance_line=abs_tolerance_line,
+                abs_tolerance_r=abs_tolerance_r,
+                abs_tolerance_trig=abs_tolerance_trig,
+            )
         tracks_all.append(path)
     return tracks_all
 
@@ -293,6 +341,9 @@ def extend_path(
     last=False,
     fit=False,
     hits=None,
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
 ):
     """Extend path by adding hits with a probability above the threshold."""
     a = 0  # Cumulative probability
@@ -349,6 +400,9 @@ def merge_tracks(
     preds=None,
     subject_idx: npt.NDArray | None = None,
     fit: bool = False,
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
     hits: pd.DataFrame | None = None,
     verbose: bool = True,
     debug=False,
@@ -382,7 +436,18 @@ def merge_tracks(
 
         if do_extend and len(leftovers_ids) > thr_extend_0:  # type: ignore
             mask = 1 * (merged_tracks == 0) * subject_mask
-            leftovers_ids = extend_path(leftovers_ids, thr=thr_extend_1, mask=mask, module_id=module_id, preds=preds, fit=fit, hits=hits)  # type: ignore
+            leftovers_ids = extend_path(
+                leftovers_ids,
+                thr=thr_extend_1,  # type: ignore
+                mask=mask,
+                module_id=module_id,  # type: ignore
+                preds=preds,  # type: ignore
+                fit=fit,
+                hits=hits,
+                abs_tolerance_line=abs_tolerance_line,
+                abs_tolerance_r=abs_tolerance_r,
+                abs_tolerance_trig=abs_tolerance_trig,
+            )
 
         if subject_idx is not None:
             # Filter on subject hits
@@ -415,6 +480,9 @@ def extend_tracks(
     subject_idx: npt.NDArray | None = None,
     fit: bool = False,
     hits: pd.DataFrame | None = None,
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
 ):
     subject_mask = np.zeros(len(merged_tracks))
     subject_mask[subject_idx] = 1
@@ -433,7 +501,17 @@ def extend_tracks(
 
         mask = 1 * (merged_tracks == 0) * subject_mask
         path_ids = extend_path(
-            path_ids=path_ids, thr=thr, mask=mask, module_id=module_id, preds=preds, last=last, fit=fit, hits=hits
+            path_ids=path_ids,
+            thr=thr,
+            mask=mask,
+            module_id=module_id,
+            preds=preds,
+            last=last,
+            fit=fit,
+            hits=hits,
+            abs_tolerance_line=abs_tolerance_line,
+            abs_tolerance_r=abs_tolerance_r,
+            abs_tolerance_trig=abs_tolerance_trig,
         )
         path_indices = path_ids - 1
         merged_tracks[path_indices] = track_id
@@ -460,6 +538,9 @@ def run_merging(
         {"thr": 2, "thr_extend_0": 1, "thr_extend_1": 0.5},  # 4: merge + extend
         {"thr": 0.5},  # 5: extend
     ],
+    abs_tolerance_line=10,
+    abs_tolerance_r=10,
+    abs_tolerance_trig=10,
 ):
     # merge tracks by confidence and get score
     if log_evaluations and truth is None:
@@ -470,7 +551,15 @@ def run_merging(
 
     if not multi_stage:
         merged_tracks, _ = merge_tracks(
-            thr=3, tracks_all=tracks_all, ordered_by_score=ordered_by_score, subject_idx=subject_idx, fit=fit, hits=hits
+            thr=3,
+            tracks_all=tracks_all,
+            ordered_by_score=ordered_by_score,
+            subject_idx=subject_idx,
+            fit=fit,
+            hits=hits,
+            abs_tolerance_line=abs_tolerance_line,
+            abs_tolerance_r=abs_tolerance_r,
+            abs_tolerance_trig=abs_tolerance_trig,
         )
         evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
         return merged_tracks
@@ -486,6 +575,9 @@ def run_merging(
         subject_idx=subject_idx,
         fit=fit,
         hits=hits,
+        abs_tolerance_line=abs_tolerance_line,
+        abs_tolerance_r=abs_tolerance_r,
+        abs_tolerance_trig=abs_tolerance_trig,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -498,6 +590,9 @@ def run_merging(
         subject_idx=subject_idx,
         fit=fit,
         hits=hits,
+        abs_tolerance_line=abs_tolerance_line,
+        abs_tolerance_r=abs_tolerance_r,
+        abs_tolerance_trig=abs_tolerance_trig,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -514,6 +609,9 @@ def run_merging(
         subject_idx=subject_idx,
         fit=fit,
         hits=hits,
+        abs_tolerance_line=abs_tolerance_line,
+        abs_tolerance_r=abs_tolerance_r,
+        abs_tolerance_trig=abs_tolerance_trig,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -526,6 +624,9 @@ def run_merging(
         subject_idx=subject_idx,
         fit=fit,
         hits=hits,
+        abs_tolerance_line=abs_tolerance_line,
+        abs_tolerance_r=abs_tolerance_r,
+        abs_tolerance_trig=abs_tolerance_trig,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -542,6 +643,9 @@ def run_merging(
         subject_idx=subject_idx,
         fit=fit,
         hits=hits,
+        abs_tolerance_line=abs_tolerance_line,
+        abs_tolerance_r=abs_tolerance_r,
+        abs_tolerance_trig=abs_tolerance_trig,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
@@ -556,6 +660,9 @@ def run_merging(
         subject_idx=subject_idx,
         fit=fit,
         hits=hits,
+        abs_tolerance_line=abs_tolerance_line,
+        abs_tolerance_r=abs_tolerance_r,
+        abs_tolerance_trig=abs_tolerance_trig,
     )
     evaluate_tracks(merged_tracks, truth) if log_evaluations else None  # type: ignore
 
