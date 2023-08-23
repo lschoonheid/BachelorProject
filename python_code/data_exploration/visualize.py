@@ -624,6 +624,9 @@ def fraction_histogram(
     ylabel="y",
     figsize=(10, 6),
     type="fill",
+    bar_pos=None,
+    colors=None,
+    base: Figure | None = None,
     **kwargs,
 ):
     # Find labels
@@ -631,6 +634,9 @@ def fraction_histogram(
         assert len(labels) == len(data), "Number of labels must match number of dataframes"
     else:
         labels = [f"df_{i}" for i in np.arange(len(data))]
+
+    if bar_pos is not None:
+        assert len(bar_pos) == len(data), "Number of bar positions must match number of dataframes"
 
     # Find range
     range = get_range(data, variable, min, max)
@@ -641,27 +647,93 @@ def fraction_histogram(
     tots = sum([hist[0] for hist in hists])
 
     # Plot
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(figsize=figsize) if base is None else (base, base.gca())
+
     x = np.arange(min, max, (max - min) / bins)
     fractions = np.nan_to_num([hist[0] / tots for hist in hists])
     cumsum = np.cumsum(fractions, axis=0)
+
     for i, (cum, label) in enumerate(zip(cumsum, labels)):
+        if colors is not None:
+            kwargs["color"] = colors[i]
+
         floor: float | np.ndarray = cumsum[i - 1] if i > 0 else np.zeros(len(cum))
         ceiling = cum
+        bpos = bar_pos[i] if bar_pos is not None else x
         # ax.plot(x, cum, **kwargs)
         if type == "fill":
             ax.fill_between(x, floor, ceiling, label=label, **kwargs)  # type: ignore
-        if type == "bar":
-            ax.bar(x, cum, label=label, zorder=-i, **kwargs)
+        elif type == "bar":
+            ax.bar(bpos, cum, label=label, zorder=-i, **kwargs)
+        elif type == "barh":
+            ax.barh(bpos, cum, label=label, zorder=-i, **kwargs)
 
     ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel)
     ax.set_title(f"Efficiency by {xlabel}" if title is None else title)
-    ax.legend()
 
     ax.legend()
+
+    ax.autoscale(enable=True, axis="both", tight=True)
+    fig.tight_layout()
+    return fig
+
+
+def horizontal_fractions(
+    data_arr: list[list[DataFrame]],
+    variable: str,
+    datalabels: list[str],
+    min: float | None = None,  # type: ignore
+    max: float | None = None,  # type: ignore
+    labels: list[str] | None = None,
+    title="",
+    xlabel="x",
+    ylabel="y",
+    colors=None,
+    **kwargs,
+):
+    fig: Figure = None  # type: ignore
+    yticks = []
+    ylabels = []
+
+    for matches_arr in data_arr:
+        if datalabels is None:
+            datalabels = [""] * len(matches_arr)
+        else:
+            print(datalabels, len(matches_arr))
+            assert len(datalabels) == len(matches_arr), "Number of data labels must match number of dataframes"
+
+    for i, tag in enumerate(datalabels):
+        # for i, data in enumerate(zip(data_arr, datalabels)):
+        match_types = [arr[i] for arr in data_arr]
+        fig = fraction_histogram(
+            match_types,
+            variable=variable,
+            labels=labels,
+            bins=1,
+            min=min,
+            max=max,
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            type="barh",
+            bar_pos=len(match_types) * [i],
+            base=fig,
+            colors=colors,
+            **kwargs,
+        )
+        yticks.append(i)
+        ylabels.append(tag)
+    fig.gca().set_yticks(yticks, ylabels)
+    fig.gca().invert_yaxis()
+
+    # Reset legend
+    handles, _labels = fig.gca().get_legend_handles_labels()
+    by_label = dict(zip(_labels, handles))
+    fig.gca().legend(by_label.values(), by_label.keys())
 
     fig.tight_layout()
+
     return fig
 
 
@@ -707,7 +779,7 @@ def plot_efficiency(
 
     datalabel_str = f"H ({datalabel})" if datalabel else "H"
     ax.plot(x, efficiency.values, label=datalabel_str, **kwargs)
-    ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label=f"$\Delta${datalabel_str}")
+    ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label=f"$\Delta${datalabel_str}")  # type: ignore
     ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel)
     ax.set_title(f"H by {xlabel}" if title is None else title)
@@ -907,11 +979,26 @@ def evaluate_submission(
             title="Track purity distribution",
             xlabel="",
             ylabel="Fraction",
-            type="bar",
+            type="barh",
         )
         # remove irrelevant xticks
-        [ax.set_xticks([]) for ax in fig.axes]
+        fig.gca().set_xticks([])
         _save_extra_figs(fig, dir, "fractions", "track_count", "histogram", f"{tag_str}_{tag}", 0.6, 1, "zoom")
+
+    fig = horizontal_fractions(
+        match_types_arrs,
+        datalabels=tags_arr,
+        variable="track_count",
+        labels=match_types_str,
+        min=0,
+        max=1,
+        title="Track purity distribution",
+        xlabel="Fraction",
+        ylabel="",
+        colors=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"],
+        height=1,
+    )
+    fig.savefig(dir + f"fractions_track_count_horizontal{tag_str}.jpg", dpi=600)
 
 
 def plot_fit(X, Y, Z, x_new, y_new, z_new, vaxis: str, crop=2, **kwargs):
