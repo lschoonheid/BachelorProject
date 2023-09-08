@@ -12,13 +12,24 @@ from .constants import DETECTOR_KEYS
 
 
 class Event:
+    # """Load a single event and return some info
+
     """Load a single event and return some info
 
-    Args:
-        dir (str | None, optional): _description_. Defaults to None.
-        event_name (str | None, optional): _description_. Defaults to None.
-        prefix (str | None, optional): _description_. Defaults to None.
-        _cached (bool, optional): _description_. Defaults to True.
+    Parameters
+    ----------
+    `dir` : str, optional
+        The directory of the event, by default None
+    `event_name` : str, optional
+        The name of the event, by default None
+    `prefix` : str, optional
+        The prefix of the event, by default None
+    `loaded_event` : tuple[DataFrame, DataFrame, DataFrame, DataFrame], optional
+        The loaded event, by default None
+    `feature_generator` : Callable[..., NDArray], optional
+        The feature generator, by default None
+    `_cached` : bool, optional
+        Whether to use the cached version of the event, by default True
     """
 
     def __init__(
@@ -159,6 +170,9 @@ class Event:
         self.hits, self.cells, self.particles, self.truth = self.all
 
         self.is_reduced = True
+        # Remove cached values that are no longer valid
+        del self.__dict__["n_particles"]
+        del self.__dict__["features"]
 
         get_logger().debug(f"Reduced event {self.event_name} to {fraction * 100}%")
         get_logger().debug(
@@ -174,6 +188,11 @@ class Event:
         self.all = self._all_original
         self.hits, self.cells, self.particles, self.truth = self.all
         self.is_reduced = False
+
+        # Remove cached values that are no longer valid
+        del self.__dict__["n_particles"]
+        del self.__dict__["features"]
+
         return None
 
     def __str__(self):
