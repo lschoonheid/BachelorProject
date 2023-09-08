@@ -7,6 +7,7 @@ from trackml.dataset import load_event_truth
 
 from data_exploration.constants import DIRECTORY, DATA_SAMPLE
 from data_exploration.helpers import find_file, find_files, prepare_path, add_r, select_r_0, extend_features, get_logger
+from trackml.score import score_event
 from data_exploration.visualize import compare_histograms, evaluate_submission
 from dirs import OUTPUT_DIR, PLOT_PATH
 
@@ -160,10 +161,17 @@ def extract(dir=OUTPUT_DIR, event_name=None, min_hits=4, verbose=False):
 
     particles_list = []
     considered_pairs_list = []
+
+    scores = []
     for submission in submissions:
         assert "event_id" in submission, "Submission does not contain event_id"
 
         truth = get_truth(submission, output_dir=dir)
+
+        score = score_event(truth, submission)
+        scores.append(score)
+        get_logger().info(f"event score: {score}")
+
         pairs = get_pairs(submission, truth)
 
         considered_particles = select_particles(pairs, min_hits=min_hits)
@@ -182,6 +190,12 @@ def extract(dir=OUTPUT_DIR, event_name=None, min_hits=4, verbose=False):
             get_logger().debug(considered_pairs)
             get_logger().debug(considered_particles_extended)
             get_logger().debug(considered_pairs_extended)
+    scores_avg = np.mean(scores)
+    scores_avg_std = np.std(scores)
+    scores_avg_std_err = scores_avg_std / np.sqrt(len(scores))
+    get_logger().info(f"Average score for {dir}: {scores_avg}")
+    get_logger().info(f"Standard deviation for {dir}: {scores_avg_std}")
+    get_logger().info(f"SEM for {dir}: {scores_avg_std_err}")
 
     # Combine all events
     all_considered_particles_extended = pd.concat(particles_list)
