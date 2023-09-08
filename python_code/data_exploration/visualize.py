@@ -101,15 +101,15 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
         ax = fig.add_subplot()
     elif len(ax_keys) == 3:
         ax = fig.add_subplot(projection="3d")
-        ax.set_zlabel(ax_keys[2])
+        ax.set_zlabel(ax_keys[2] + " [mm]")
     else:
         raise ValueError("Axes not recognized")
-    ax.set_xlabel(ax_keys[0])
-    ax.set_ylabel(ax_keys[1])
+    ax.set_xlabel(ax_keys[0] + " [mm]")
+    ax.set_ylabel(ax_keys[1] + " [mm]")
 
     scatter = ax.scatter(*columns, s=0.1, c=get_colors(data, mode=color_mode))
 
-    ax.set_title(f"Scatter plot of { ax_title_str } coordinates")
+    # ax.set_title(f"Hits { ax_title_str } coordinates")
     ax.legend(*scatter.legend_elements(), title=color_mode)
 
     fig.tight_layout()
@@ -117,7 +117,7 @@ def scatter(data: DataFrame, *ax_keys: str, color_mode: str = "volume_id"):
 
 
 def versus_scatter(
-    event,
+    event: dict[str, DataFrame],
     table_0: str,
     ax_0: str,
     table_1: str,
@@ -700,7 +700,6 @@ def horizontal_fractions(
         if datalabels is None:
             datalabels = [""] * len(matches_arr)
         else:
-            print(datalabels, len(matches_arr))
             assert len(datalabels) == len(matches_arr), "Number of data labels must match number of dataframes"
 
     for i, tag in enumerate(datalabels):
@@ -761,7 +760,6 @@ def plot_efficiency(
     binned_truth_count = groups_truth.count()[variable]
 
     cut_test = pd.cut(test[variable], bins=bins_index)  # type: ignore
-    print(cut_test)
     groups_test = test.groupby(cut_test)
     binned_test_count = groups_test.count()[variable]
 
@@ -777,15 +775,61 @@ def plot_efficiency(
     # yerr = groups_test.std()[variable] / (np.sqrt(binned_test_count))
     # yerr = np.sqrt(binned_test_count) / binned_truth_count
 
-    datalabel_str = f"H ({datalabel})" if datalabel else "H"
+    datalabel_str = f"$\\epsilon$ ({datalabel})" if datalabel else "$\\epsilon$"
     ax.plot(x, efficiency.values, label=datalabel_str, **kwargs)
-    ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label=f"$\Delta${datalabel_str}")  # type: ignore
+    ax.fill_between(x, efficiency - yerr, efficiency + yerr, alpha=0.5, label=f"$\\Delta${datalabel_str}")
     ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel)
-    ax.set_title(f"H by {xlabel}" if title is None else title)
+    ax.set_title(f"Efficiency by {xlabel}" if title is None else title)
     ax.grid(True)
     ax.autoscale(enable=True, axis="both", tight=True)
     ax.set_ylim(0, 1)
+    ax.legend()
+    fig.tight_layout()
+
+    return fig
+
+
+def plot_mean(
+    truth: pd.DataFrame,
+    test: pd.DataFrame,
+    x_variable: str,
+    y_variable: str,
+    bins: int = 100,
+    x_min=None,
+    x_max=None,
+    title=None,
+    xlabel="x",
+    ylabel="Value",
+    datalabel: str | None = None,
+    figsize=(10, 6),
+    base: Figure | None = None,
+    **kwargs,
+):
+    min_bin = truth[x_variable].min() if x_min is None else x_min
+    max_bin = truth[x_variable].max() if x_max is None else x_max
+    bins_index = pd.cut(pd.Series([min_bin, max_bin]), bins=bins, retbins=True)[1]
+
+    cut_test = pd.cut(test[x_variable], bins=bins_index)  # type: ignore
+    groups_test = test.groupby(cut_test)
+    binned_test_count = groups_test.count()[x_variable]
+
+    yvalue = groups_test.mean()[y_variable]
+    yerr = groups_test.std()[y_variable] / np.sqrt(binned_test_count)
+
+    fig, ax = plt.subplots(figsize=figsize) if base is None else (base, base.gca())
+
+    x = np.arange(min_bin, max_bin, (max_bin - min_bin) / bins)
+
+    datalabel_str = datalabel if datalabel else f"<{y_variable}>"
+    ax.plot(x, yvalue.values, label=datalabel_str, **kwargs)
+    ax.fill_between(x, yvalue - yerr, yvalue + yerr, alpha=0.5, label=f"$\\Delta${datalabel_str}")
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
+    ax.set_title(f"Purity by {xlabel}" if title is None else title)
+    ax.grid(True)
+    ax.autoscale(enable=True, axis="both", tight=True)
+    # ax.set_ylim(0, 1)
     ax.legend()
     fig.tight_layout()
 
@@ -855,18 +899,21 @@ def evaluate_submission(
 
     variables_str = ["r_0", "z_0", "p_0", "p_t_0", "log_10_p_t_0", "phi_0", "theta_0", "pseudo_rapidity_0"]
     var_labels = [
-        "vertex $r_0$ [mm]",
-        "vertex $z_0$ [mm]",
-        "$p$",
-        "$P_{T}$",
+        "Detection point $r_0$ [mm]",
+        "Detection point $z_0$ [mm]",
+        "$p$ [GeV/c]",
+        "$P_{T}$ [GeV/c]",
         "$log_{10}$ $p_{T}$",
-        "$\\phi$",
-        "$\\theta$",
-        "$\\eta$",
+        "$\\phi_0$",
+        "$\\theta_0$",
+        "$\\eta_0$",
     ]
 
+    mean_variables = ["track_purity", "particle_purity"]
+    mean_variables_str = ["track purity", "particle purity"]
+
     x_mins = [0, -15, 0, 0, None, -np.pi, 0, -np.pi]
-    x_maxs = [600, 15, 25, 5, 2, np.pi, np.pi, np.pi]
+    x_maxs = [600, 15, 25, 5, 1.3, np.pi, np.pi, np.pi]
 
     # For efficiencies only
     y_mins = [0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
@@ -915,6 +962,24 @@ def evaluate_submission(
                     base=fig,
                 )
             _save_extra_figs(fig, dir, match_type_str, variable, "efficiency", tag_str, y_min, y_max)
+
+            # fig: Figure = None  # type: ignore
+            # for particles, matches, tag in zip(particles_arr, matches_arr, tags_arr):
+            #     for mean_var, mean_var_str in zip(mean_variables, mean_variables_str):
+            #         fig = plot_mean(
+            #             particles,
+            #             matches,
+            #             x_variable=variable,
+            #             y_variable=mean_var,
+            #             ylabel="Purity",
+            #             x_max=600,
+            #             xlabel=label,
+            #             datalabel=mean_var_str,
+            #             base=fig,
+            #         )
+            # _save_extra_figs(
+            #     fig, dir, match_type_str, variable, f"means_{'_'.join(mean_variables)}", tag_str, y_min, y_max
+            # )
 
         # Plot zoom of r_0
         fig: Figure = None  # type: ignore
