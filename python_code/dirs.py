@@ -7,6 +7,6 @@ SOLUTION_DIR = MODELS_ROOT + "original_model/"
 PREFIX = DATA_SAMPLE
 
 LOG_DIR = DIRECTORY + "logs/DNN/"
-OUTPUT_DIR = DIRECTORY + "output/reduced/random/"
+OUTPUT_DIR = DIRECTORY + "output/reduced/random/fit/10/"
 # OUTPUT_DIR = DIRECTORY + "output/outrunner_model/"
 PLOT_PATH = "/project/atlas/users/lschoonh/BachelorProject/" + "docs/plots/"
